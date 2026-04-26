@@ -107,11 +107,38 @@
       }
 
       li {
-        padding: 9px 10px;
+        padding: 8px 10px;
         border-radius: 9px;
         border: 1px solid var(--border);
         background: var(--panel-2);
         font-size: 13px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .show-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .remove-btn {
+        background: transparent;
+        border: 1px solid #4a5263;
+        color: var(--muted);
+        border-radius: 7px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        padding: 3px 8px;
+      }
+
+      .remove-btn:hover {
+        color: #ffb0b0;
+        border-color: #a35757;
+        background: rgba(163, 87, 87, 0.15);
       }
 
       .empty {

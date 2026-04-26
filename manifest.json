@@ -4,9 +4,13 @@
   "version": "0.1.0",
   "description": "AI-powered spoiler blocker (starter scaffold).",
   "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["https://api.openai.com/*"],
   "action": {
     "default_title": "Plot Armor",
     "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {

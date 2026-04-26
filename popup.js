@@ -16,7 +16,18 @@ function renderShows(shows) {
 
   shows.forEach((show) => {
     const item = document.createElement("li");
-    item.textContent = show;
+    const showName = document.createElement("span");
+    showName.className = "show-name";
+    showName.textContent = show;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove-btn";
+    removeBtn.type = "button";
+    removeBtn.textContent = "Remove";
+    removeBtn.dataset.show = show;
+
+    item.appendChild(showName);
+    item.appendChild(removeBtn);
     listEl.appendChild(item);
   });
 }
@@ -35,6 +46,40 @@ function setShows(shows) {
   });
 }
 
+function requestKeywordRefresh(show, isRefresh = false) {
+  console.info("[Plot Armor popup] Sending show to background", { show, isRefresh });
+  chrome.runtime.sendMessage({ type: "SHOW_ADDED", showName: show }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("Plot Armor background message error:", chrome.runtime.lastError.message);
+      return;
+    }
+
+    if (!response?.ok) {
+      console.error("Plot Armor failed to fetch keywords:", response?.error || "Unknown error");
+      return;
+    }
+
+    console.info("[Plot Armor popup] Background processing succeeded", response.data);
+  });
+}
+
+function requestShowRemoval(show) {
+  console.info("[Plot Armor popup] Removing show", { show });
+  chrome.runtime.sendMessage({ type: "SHOW_REMOVED", showName: show }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error("Plot Armor background remove message error:", chrome.runtime.lastError.message);
+      return;
+    }
+
+    if (!response?.ok) {
+      console.error("Plot Armor failed to remove show keywords:", response?.error || "Unknown error");
+      return;
+    }
+
+    console.info("[Plot Armor popup] Show removal processed", response.data);
+  });
+}
+
 async function addShow() {
   const show = inputEl.value.trim();
 
@@ -44,12 +89,17 @@ async function addShow() {
   const exists = shows.some((item) => item.toLowerCase() === show.toLowerCase());
 
   if (exists) {
+    requestKeywordRefresh(show, true);
     inputEl.value = "";
     return;
   }
 
   const updatedShows = [...shows, show];
   await setShows(updatedShows);
+  console.info("[Plot Armor popup] Added show to sync storage", { show });
+
+  requestKeywordRefresh(show);
+
   renderShows(updatedShows);
   inputEl.value = "";
 }
@@ -59,6 +109,20 @@ inputEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     addShow();
   }
+});
+
+listEl.addEventListener("click", async (event) => {
+  const removeBtn = event.target.closest(".remove-btn");
+  if (!removeBtn) return;
+
+  const showToRemove = removeBtn.dataset.show;
+  if (!showToRemove) return;
+
+  const shows = await getShows();
+  const updatedShows = shows.filter((show) => show !== showToRemove);
+  await setShows(updatedShows);
+  renderShows(updatedShows);
+  requestShowRemoval(showToRemove);
 });
 
 getShows().then(renderShows);
