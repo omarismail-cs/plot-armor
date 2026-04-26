@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Plot Armor",
+  "version": "0.1.0",
+  "description": "AI-powered spoiler blocker (starter scaffold).",
+  "permissions": ["activeTab", "storage", "scripting"],
+  "action": {
+    "default_title": "Plot Armor",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}

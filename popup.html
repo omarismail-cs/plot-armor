@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plot Armor</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --panel: #171a21;
+        --panel-2: #1d212b;
+        --text: #f3f5f7;
+        --muted: #a2a8b3;
+        --accent: #7c8cff;
+        --accent-2: #6273ff;
+        --border: #2b3240;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 340px;
+        padding: 16px;
+        background: radial-gradient(circle at top, #171b24, var(--bg) 58%);
+        color: var(--text);
+        font-family: Inter, Segoe UI, Arial, sans-serif;
+      }
+
+      .card {
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.04));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .subtitle {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .input-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      input[type="text"] {
+        flex: 1;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+        outline: none;
+      }
+
+      input[type="text"]::placeholder {
+        color: #7b8494;
+      }
+
+      input[type="text"]:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(124, 140, 255, 0.2);
+      }
+
+      button {
+        border: 0;
+        border-radius: 10px;
+        background: linear-gradient(180deg, var(--accent), var(--accent-2));
+        color: #ffffff;
+        font-weight: 600;
+        padding: 0 14px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        filter: brightness(1.08);
+      }
+
+      h2 {
+        margin: 16px 0 8px;
+        font-size: 13px;
+        letter-spacing: 0.2px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 180px;
+        overflow-y: auto;
+      }
+
+      li {
+        padding: 9px 10px;
+        border-radius: 9px;
+        border: 1px solid var(--border);
+        background: var(--panel-2);
+        font-size: 13px;
+      }
+
+      .empty {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Plot Armor</h1>
+      <p class="subtitle">Protect yourself from spoilers.</p>
+
+      <div class="input-row">
+        <input id="showInput" type="text" placeholder="Add a show to protect" />
+        <button id="addBtn" type="button">Add</button>
+      </div>
+
+      <h2>Currently Protected Shows</h2>
+      <p id="emptyState" class="empty">No protected shows yet.</p>
+      <ul id="showList"></ul>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
