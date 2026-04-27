@@ -16,6 +16,7 @@ const SIGNAL_PATTERNS = {
   castingAnnouncement:
     /\b(announced that|was cast as|joined the cast|return(?:s|ed) for|guest appearance|fbi agent|season one returners|in june|in july|in september|in november)\b/i,
 };
+const DEATH_CUE_REGEX = /\b(dies|die|death|killed|murdered|slain|executed|fatal|killed off)\b/i;
 const HIGH_RISK_SECTION_REGEX = /\b(premise|plot|synopsis|story|characters?)\b/i;
 const LOW_RISK_SECTION_REGEX = /\b(casting|production|reception|reviews?|music|soundtrack)\b/i;
 const NARRATIVE_HISTORIAN_SYSTEM_PROMPT = `You are the Plot Armor Narrative Historian. Your job is to extract 100% accurate, canon-only spoilers for the show/movie provided.
@@ -321,31 +322,37 @@ async function handleShowRemoved(showName) {
   return { showName };
 }
 
-function extractContextTerms(showContext) {
+function extractContextTerms(showContext, showName = "") {
   if (!showContext || typeof showContext !== "object") return [];
   const deathNames = normalizeList(showContext.major_death_names);
+  const pivotalTwists = normalizeList(showContext.pivotal_twists);
   const statusChanges = normalizeList(showContext.status_changes);
   const highRiskKeywords = normalizeList(showContext.high_risk_keywords);
   const terms = [...deathNames, ...highRiskKeywords];
+  const normalizedShowName = String(showName || "").trim();
+  if (normalizedShowName) {
+    terms.push(normalizedShowName);
+  }
 
-  statusChanges.forEach((change) => {
-    change
+  [...statusChanges, ...pivotalTwists].forEach((line) => {
+    line
       .split(/[^A-Za-z0-9'’]+/)
       .map((token) => token.trim())
-      .filter((token) => token.length >= 5)
+      .filter((token) => token.length >= 4)
       .forEach((token) => terms.push(token));
   });
 
-  return normalizeList(terms);
+  const normalized = normalizeList(terms);
+  return normalized.length ? normalized : normalizedShowName ? [normalizedShowName] : [];
 }
 
-function tier1AnalyzeShow(textToAnalyze, showContext) {
+function tier1AnalyzeShow(textToAnalyze, showContext, showName = "") {
   const text = String(textToAnalyze || "").toLowerCase();
   const normalizedText = text
     .replace(/[^\w\s']/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const entities = extractContextTerms(showContext);
+  const entities = extractContextTerms(showContext, showName);
   const terms = [];
 
   entities.forEach((entity) => {
@@ -357,7 +364,7 @@ function tier1AnalyzeShow(textToAnalyze, showContext) {
     full
       .split(/\s+/)
       .map((token) => token.replace(/[^\w']/g, "").replace(/(?:'s|’s)$/i, ""))
-      .filter((token) => token.length >= 5 && !TIER1_TOKEN_BLOCKLIST.has(token))
+      .filter((token) => token.length >= 4 && !TIER1_TOKEN_BLOCKLIST.has(token))
       .forEach((token) => terms.push(token));
   });
 
@@ -440,6 +447,7 @@ function computeDeterministicSignals({
   sectionHint,
   matchedShows,
   tier1ByShow,
+  showContexts,
 }) {
   const strongestTier1MatchCount = matchedShows.reduce((maxCount, showName) => {
     const count = tier1ByShow[showName]?.matchedCount || 0;
@@ -449,14 +457,29 @@ function computeDeterministicSignals({
   const hasMajorCue = SIGNAL_PATTERNS.majorSpoilerCues.test(text);
   const hasRelationshipReveal = SIGNAL_PATTERNS.relationshipReveal.test(text);
   const hasTwistIdentity = SIGNAL_PATTERNS.twistIdentity.test(text);
+  const hasDeathCue = DEATH_CUE_REGEX.test(text);
   const looksLikeNonSpoilerContext = SIGNAL_PATTERNS.nonSpoilerContext.test(text);
   const looksLikeCastingAnnouncement = SIGNAL_PATTERNS.castingAnnouncement.test(text);
   const sectionRisk = getSectionRiskAdjustment(sectionHint);
-  let riskScore = sectionRisk + Math.min(0.35, strongestTier1MatchCount * 0.08);
+  const deathNameHitCount = matchedShows.reduce((total, showName) => {
+    const deathNames = normalizeList(showContexts?.[showName]?.major_death_names);
+    const normalizedText = normalizeForMatch(text);
+    const hits = deathNames.filter((name) => normalizedText.includes(normalizeForMatch(name))).length;
+    return total + hits;
+  }, 0);
+
+  // Generic tier1 matches should contribute modestly by default.
+  let riskScore = sectionRisk + Math.min(0.22, strongestTier1MatchCount * 0.05);
 
   if (hasMajorCue) riskScore += 0.25;
   if (hasTwistIdentity) riskScore += 0.2;
   if (hasRelationshipReveal) riskScore += 0.35;
+  // Death names are high-signal only when explicit death/fate language appears.
+  if (hasDeathCue && deathNameHitCount > 0) {
+    riskScore += Math.min(0.3, deathNameHitCount * 0.1);
+  } else if (deathNameHitCount > 0) {
+    riskScore -= Math.min(0.15, deathNameHitCount * 0.05);
+  }
   if (looksLikeNonSpoilerContext) riskScore -= 0.2;
   if (looksLikeCastingAnnouncement) riskScore -= 0.2;
 
@@ -572,7 +595,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   const protectedShows = Array.isArray(sync.protectedShows) ? sync.protectedShows : [];
   const tier1ByShow = {};
   const matchedShows = protectedShows.filter((showName) => {
-    const analysis = tier1AnalyzeShow(text, showContexts[showName]);
+    const analysis = tier1AnalyzeShow(text, showContexts[showName], showName);
     tier1ByShow[showName] = analysis;
     return analysis.isMatch;
   });
@@ -596,6 +619,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     sectionHint,
     matchedShows,
     tier1ByShow,
+    showContexts,
   });
   const dynamicThreshold = getDynamicThreshold(signals.riskScore);
 

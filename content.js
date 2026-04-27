@@ -12,6 +12,8 @@ const EVAL_CONCURRENCY_LIMIT = 2;
 const FALLBACK_SELECTOR = "[id='mw-content-text'] .mw-parser-output > p";
 const FALLBACK_EXCLUDE_SELECTOR =
   "nav, .toc, .toclevel-1, .toclevel-2, .toclevel-3, .infobox, .references, .metadata, header, footer, aside";
+const REDDIT_COMMENT_SELECTOR =
+  "shreddit-comment, [data-testid='comment'], [data-test-id='comment'], article[thingid^='t1_'], div[id^='comment-thing-']";
 
 let processVisibleDebounce = null;
 const observedContainers = new WeakSet();
@@ -23,7 +25,17 @@ let activeEvaluations = 0;
 function getCandidateSelector() {
   const host = location.hostname.toLowerCase();
   if (host.includes("reddit.com")) {
-    return 'shreddit-post, article[data-testid="post-container"], div[data-click-id="body"], article';
+    return [
+      "shreddit-post",
+      "shreddit-comment",
+      'article[data-testid="post-container"]',
+      '[data-testid="comment"]',
+      '[data-test-id="comment"]',
+      'div[data-click-id="body"]',
+      'article[thingid^="t1_"]',
+      'div[id^="comment-thing-"]',
+      "article",
+    ].join(", ");
   }
   if (host.includes("twitter.com") || host.includes("x.com")) {
     return 'article[data-testid="tweet"], [data-testid="cellInnerDiv"] article';
@@ -130,7 +142,19 @@ function blurContainer(container) {
 }
 
 function extractContainerText(container) {
-  return (container.innerText || "").replace(/\s+/g, " ").trim();
+  const host = location.hostname.toLowerCase();
+  if (!host.includes("reddit.com")) {
+    return (container.innerText || "").replace(/\s+/g, " ").trim();
+  }
+
+  const clone = container.cloneNode(true);
+  const nestedComments = clone.querySelectorAll(REDDIT_COMMENT_SELECTOR);
+  nestedComments.forEach((node) => {
+    if (node === clone) return;
+    node.remove();
+  });
+
+  return (clone.innerText || "").replace(/\s+/g, " ").trim();
 }
 
 function debugLog(message, payload) {
@@ -177,7 +201,14 @@ async function evaluateContainer(container) {
   if (container.getAttribute(PROCESSED_ATTR) === "1") return;
 
   const textToAnalyze = extractContainerText(container);
-  if (!textToAnalyze || textToAnalyze.length < MIN_TEXT_LENGTH) {
+  const isRedditComment =
+    location.hostname.toLowerCase().includes("reddit.com") &&
+    (container.matches("shreddit-comment, [data-testid='comment'], [data-test-id='comment']") ||
+      String(container.getAttribute("thingid") || "").startsWith("t1_") ||
+      String(container.id || "").startsWith("comment-thing-"));
+  const minLengthForContainer = isRedditComment ? 20 : MIN_TEXT_LENGTH;
+
+  if (!textToAnalyze || textToAnalyze.length < minLengthForContainer) {
     container.setAttribute(PROCESSED_ATTR, "1");
     return;
   }
@@ -283,6 +314,11 @@ function shouldSkipContainer(container) {
     id.includes("toc")
   ) {
     return true;
+  }
+
+  if (location.hostname.toLowerCase().includes("reddit.com")) {
+    const ownText = extractContainerText(container);
+    if (!ownText || ownText.length < 5) return true;
   }
 
   return false;
