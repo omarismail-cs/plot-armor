@@ -45,6 +45,7 @@ const TIER1_TOKEN_BLOCKLIST = new Set([
   "revealed",
 ]);
 let cachedApiKey = null;
+let cachedTmdbReadToken = null;
 
 function normalizeList(values) {
   if (!Array.isArray(values)) return [];
@@ -255,13 +256,186 @@ async function callOpenAI(messages, temperature = 0.2, extraBody = {}) {
   return data?.choices?.[0]?.message?.content || "";
 }
 
-async function learnShowContext(showName) {
+async function loadTmdbReadTokenFromEnv() {
+  if (cachedTmdbReadToken) return cachedTmdbReadToken;
+
+  const envUrl = chrome.runtime.getURL(".env");
+  const response = await fetch(envUrl);
+  if (!response.ok) throw new Error("Could not load .env file.");
+
+  const envText = await response.text();
+  const lines = envText.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex === -1) continue;
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    let value = trimmed.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    if (key === "TMDB_READ_ACCESS_TOKEN" && value) {
+      cachedTmdbReadToken = value;
+      return cachedTmdbReadToken;
+    }
+  }
+
+  throw new Error("TMDB_READ_ACCESS_TOKEN not found in .env");
+}
+
+async function searchTmdbTitles(query) {
+  const searchQuery = String(query || "").trim();
+  if (searchQuery.length < 2) return [];
+
+  const token = await loadTmdbReadTokenFromEnv();
+  const url = `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(
+    searchQuery
+  )}&include_adult=false&language=en-US&page=1`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`TMDB search failed ${response.status}: ${errorBody}`);
+  }
+
+  const data = await response.json();
+  return (data?.results || [])
+    .filter((item) => item && (item.media_type === "tv" || item.media_type === "movie"))
+    .slice(0, 8)
+    .map((item) => ({
+      id: item.id,
+      mediaType: item.media_type,
+      title: item.title || item.name || "",
+      year: String(item.release_date || item.first_air_date || "").slice(0, 4),
+    }));
+}
+
+async function fetchTmdbJson(url, token) {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) return null;
+  return response.json();
+}
+
+async function fetchTmdbMediaContext(mediaType, id) {
+  if (!id || !["tv", "movie"].includes(mediaType)) return null;
+  const token = await loadTmdbReadTokenFromEnv();
+
+  const details = await fetchTmdbJson(
+    `https://api.themoviedb.org/3/${mediaType}/${id}?language=en-US`,
+    token
+  );
+  if (!details) return null;
+
+  const credits = await fetchTmdbJson(
+    `https://api.themoviedb.org/3/${mediaType}/${id}/credits?language=en-US`,
+    token
+  );
+  const keywordPayload = await fetchTmdbJson(
+    mediaType === "tv"
+      ? `https://api.themoviedb.org/3/tv/${id}/keywords`
+      : `https://api.themoviedb.org/3/movie/${id}/keywords`,
+    token
+  );
+
+  const cast = Array.isArray(credits?.cast) ? credits.cast.slice(0, 15) : [];
+  const actorNames = normalizeList(cast.map((entry) => entry?.name));
+  const characterNames = normalizeList(cast.map((entry) => entry?.character));
+  const keywords = normalizeList(
+    (Array.isArray(keywordPayload?.results)
+      ? keywordPayload.results
+      : Array.isArray(keywordPayload?.keywords)
+        ? keywordPayload.keywords
+        : []
+    ).map((item) => item?.name)
+  );
+
+  let episodeTitles = [];
+  if (mediaType === "tv" && Array.isArray(details?.seasons)) {
+    const seasonNumbers = details.seasons
+      .map((season) => season?.season_number)
+      .filter((num) => Number.isInteger(num) && num >= 0)
+      .slice(0, 8);
+
+    const seasonPayloads = await Promise.all(
+      seasonNumbers.map((seasonNumber) =>
+        fetchTmdbJson(
+          `https://api.themoviedb.org/3/tv/${id}/season/${seasonNumber}?language=en-US`,
+          token
+        )
+      )
+    );
+    episodeTitles = normalizeList(
+      seasonPayloads
+        .flatMap((season) => (Array.isArray(season?.episodes) ? season.episodes : []))
+        .map((episode) => episode?.name)
+    ).slice(0, 40);
+  }
+
+  return {
+    id: details.id,
+    mediaType,
+    title: details.title || details.name || "",
+    originalTitle: details.original_title || details.original_name || "",
+    overview: details.overview || "",
+    actorNames,
+    characterNames,
+    keywords,
+    episodeTitles,
+  };
+}
+
+async function resolveTmdbContext(showName, tmdbSelection = null) {
+  if (tmdbSelection?.id && tmdbSelection?.mediaType) {
+    const selectedContext = await fetchTmdbMediaContext(tmdbSelection.mediaType, tmdbSelection.id);
+    if (selectedContext) return selectedContext;
+  }
+
+  const matches = await searchTmdbTitles(showName);
+  const first = matches[0];
+  if (!first?.id || !first?.mediaType) return null;
+  return fetchTmdbMediaContext(first.mediaType, first.id);
+}
+
+async function learnShowContext(showName, tmdbContext = null) {
+  const contextBlock = tmdbContext
+    ? JSON.stringify(
+        {
+          canonical_title: tmdbContext.title,
+          original_title: tmdbContext.originalTitle,
+          media_type: tmdbContext.mediaType,
+          overview: tmdbContext.overview,
+          actor_names: tmdbContext.actorNames,
+          character_names: tmdbContext.characterNames,
+          tmdb_keywords: tmdbContext.keywords,
+          episode_titles: tmdbContext.episodeTitles,
+        },
+        null,
+        2
+      )
+    : "No TMDB context found.";
+
   const systemPrompt = `You are the Plot Armor Spoiler Assassin. Your job is to find the most 'radioactive' spoilers for the show provided.
 STRICT INSTRUCTIONS:
 Ignore the Premise: Do NOT include basic setup info (e.g., 'Matt is a lawyer'). Assume the user already knows how the show starts.
 Target the Twists: Focus ONLY on major character deaths, secret identities revealed, massive betrayals, and series-finale shocks.
 Be Specific: I need the names of people who die and the exact nature of the twists.
 Factual Accuracy: Only include things that actually happen in the canon.
+Use TMDB Grounding: Use the TMDB metadata below to stay grounded to the exact title/characters for this request.
 Categories to fill:
 major_death_names: Names of characters who die later in the series.
 pivotal_twists: The biggest shocks of the show.
@@ -271,7 +445,10 @@ Return as a flat JSON object with single-string array items. Analyze: ${showName
   const raw = await callOpenAI(
     [
       { role: "system", content: systemPrompt },
-      { role: "user", content: `Forensically analyze the show/movie: ${showName}` },
+      {
+        role: "user",
+        content: `Forensically analyze the show/movie: ${showName}\n\nTMDB Context:\n${contextBlock}`,
+      },
     ],
     0,
     { response_format: { type: "json_object" } }
@@ -281,15 +458,22 @@ Return as a flat JSON object with single-string array items. Analyze: ${showName
   return normalizeShowContext(parsed, showName);
 }
 
-async function handleShowAdded(showName) {
+async function handleShowAdded(showName, _tmdbSelection = null) {
   console.info(`${LOG_PREFIX} SHOW_ADDED received`, { showName });
   const local = await chrome.storage.local.get([SHOW_CONTEXTS_KEY]);
   const showContexts = local[SHOW_CONTEXTS_KEY] || {};
   let context;
   let usedFallback = false;
+  let tmdbContext = null;
 
   try {
-    context = await learnShowContext(showName);
+    tmdbContext = await resolveTmdbContext(showName, _tmdbSelection);
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} TMDB context fetch failed`, { showName, error });
+  }
+
+  try {
+    context = await learnShowContext(showName, tmdbContext);
   } catch (error) {
     console.error(`${LOG_PREFIX} Context fetch failed, using fallback`, { showName, error });
     context = createFallbackContext(showName);
@@ -297,6 +481,12 @@ async function handleShowAdded(showName) {
   }
 
   showContexts[showName] = context;
+  // Store TMDB character/actor names directly so Tier 1 can match on them
+  // regardless of what OpenAI chose to include in its spoiler arrays.
+  if (tmdbContext) {
+    showContexts[showName].tmdb_character_names = tmdbContext.characterNames || [];
+    showContexts[showName].tmdb_actor_names = tmdbContext.actorNames || [];
+  }
   await chrome.storage.local.set({ [SHOW_CONTEXTS_KEY]: showContexts });
   console.info(`${LOG_PREFIX} SHOW_ADDED stored context`, {
     showName,
@@ -304,9 +494,10 @@ async function handleShowAdded(showName) {
     twists: context.pivotal_twists.length,
     statusChanges: context.status_changes.length,
     highRiskKeywords: context.high_risk_keywords.length,
+    tmdbGrounded: Boolean(tmdbContext),
     usedFallback,
   });
-  return { showName, context, usedFallback };
+  return { showName, context, tmdbGrounded: Boolean(tmdbContext), usedFallback };
 }
 
 async function handleShowRemoved(showName) {
@@ -328,7 +519,9 @@ function extractContextTerms(showContext, showName = "") {
   const pivotalTwists = normalizeList(showContext.pivotal_twists);
   const statusChanges = normalizeList(showContext.status_changes);
   const highRiskKeywords = normalizeList(showContext.high_risk_keywords);
-  const terms = [...deathNames, ...highRiskKeywords];
+  const tmdbCharacters = normalizeList(showContext.tmdb_character_names);
+  const tmdbActors = normalizeList(showContext.tmdb_actor_names);
+  const terms = [...deathNames, ...highRiskKeywords, ...tmdbCharacters, ...tmdbActors];
   const normalizedShowName = String(showName || "").trim();
   if (normalizedShowName) {
     terms.push(normalizedShowName);
@@ -733,8 +926,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const containerTag = message?.containerTag;
 
   const run = async () => {
-    if (type === "SHOW_ADDED" && showName) return handleShowAdded(showName);
+    if (type === "SHOW_ADDED" && showName) return handleShowAdded(showName, message?.tmdbSelection);
     if (type === "SHOW_REMOVED" && showName) return handleShowRemoved(showName);
+    if (type === "TMDB_SEARCH") return { results: await searchTmdbTitles(message?.query) };
     if (type === "SEMANTIC_CHECK") {
       return handleSemanticCheck(textToAnalyze, sender?.url || "", sectionHint, containerTag);
     }

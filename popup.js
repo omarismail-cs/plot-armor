@@ -3,6 +3,10 @@ const inputEl = document.getElementById("showInput");
 const addBtn = document.getElementById("addBtn");
 const listEl = document.getElementById("showList");
 const emptyEl = document.getElementById("emptyState");
+const suggestionsEl = document.getElementById("suggestions");
+let searchDebounce = null;
+let latestSearchToken = 0;
+let selectedSuggestion = null;
 
 function renderShows(shows) {
   listEl.innerHTML = "";
@@ -46,9 +50,11 @@ function setShows(shows) {
   });
 }
 
-function requestKeywordRefresh(show, isRefresh = false) {
-  console.info("[Plot Armor popup] Sending show to background", { show, isRefresh });
-  chrome.runtime.sendMessage({ type: "SHOW_ADDED", showName: show }, (response) => {
+function requestKeywordRefresh(show, isRefresh = false, tmdbSelection = null) {
+  console.info("[Plot Armor popup] Sending show to background", { show, isRefresh, tmdbSelection });
+  chrome.runtime.sendMessage(
+    { type: "SHOW_ADDED", showName: show, tmdbSelection: tmdbSelection || undefined },
+    (response) => {
     if (chrome.runtime.lastError) {
       console.error("Plot Armor background message error:", chrome.runtime.lastError.message);
       return;
@@ -60,7 +66,8 @@ function requestKeywordRefresh(show, isRefresh = false) {
     }
 
     console.info("[Plot Armor popup] Background processing succeeded", response.data);
-  });
+    }
+  );
 }
 
 function requestShowRemoval(show) {
@@ -81,7 +88,8 @@ function requestShowRemoval(show) {
 }
 
 async function addShow() {
-  const show = inputEl.value.trim();
+  const typed = inputEl.value.trim();
+  const show = selectedSuggestion?.title || typed;
 
   if (!show) return;
 
@@ -89,8 +97,10 @@ async function addShow() {
   const exists = shows.some((item) => item.toLowerCase() === show.toLowerCase());
 
   if (exists) {
-    requestKeywordRefresh(show, true);
+    requestKeywordRefresh(show, true, selectedSuggestion);
     inputEl.value = "";
+    selectedSuggestion = null;
+    hideSuggestions();
     return;
   }
 
@@ -98,10 +108,12 @@ async function addShow() {
   await setShows(updatedShows);
   console.info("[Plot Armor popup] Added show to sync storage", { show });
 
-  requestKeywordRefresh(show);
+  requestKeywordRefresh(show, false, selectedSuggestion);
 
   renderShows(updatedShows);
   inputEl.value = "";
+  selectedSuggestion = null;
+  hideSuggestions();
 }
 
 addBtn.addEventListener("click", addShow);
@@ -109,6 +121,15 @@ inputEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     addShow();
   }
+});
+inputEl.addEventListener("input", () => {
+  selectedSuggestion = null;
+  const query = inputEl.value.trim();
+  if (query.length < 2) {
+    hideSuggestions();
+    return;
+  }
+  searchTmdbSuggestions(query);
 });
 
 listEl.addEventListener("click", async (event) => {
@@ -123,6 +144,77 @@ listEl.addEventListener("click", async (event) => {
   await setShows(updatedShows);
   renderShows(updatedShows);
   requestShowRemoval(showToRemove);
+});
+
+function hideSuggestions() {
+  suggestionsEl.classList.add("hidden");
+  suggestionsEl.innerHTML = "";
+}
+
+function selectSuggestion(suggestion) {
+  selectedSuggestion = suggestion;
+  inputEl.value = suggestion.title;
+  hideSuggestions();
+}
+
+function renderSuggestions(results) {
+  suggestionsEl.innerHTML = "";
+  if (!results.length) {
+    hideSuggestions();
+    return;
+  }
+  results.forEach((result) => {
+    const item = document.createElement("li");
+    item.className = "suggestion-item";
+    item.dataset.id = String(result.id);
+    item.dataset.title = result.title;
+    item.dataset.year = result.year || "";
+    item.dataset.mediaType = result.mediaType;
+
+    const title = document.createElement("div");
+    title.className = "suggestion-title";
+    title.textContent = result.title;
+
+    const meta = document.createElement("div");
+    meta.className = "suggestion-meta";
+    const mediaLabel = result.mediaType === "tv" ? "TV" : "Movie";
+    meta.textContent = `${mediaLabel}${result.year ? ` • ${result.year}` : ""}`;
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    suggestionsEl.appendChild(item);
+  });
+  suggestionsEl.classList.remove("hidden");
+}
+
+function searchTmdbSuggestions(query) {
+  if (searchDebounce) clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => {
+    const token = ++latestSearchToken;
+    chrome.runtime.sendMessage({ type: "TMDB_SEARCH", query }, (response) => {
+      if (token !== latestSearchToken) return;
+      if (chrome.runtime.lastError || !response?.ok) {
+        hideSuggestions();
+        return;
+      }
+      renderSuggestions(response.data?.results || []);
+    });
+  }, 220);
+}
+
+suggestionsEl.addEventListener("click", (event) => {
+  const item = event.target.closest(".suggestion-item");
+  if (!item) return;
+  selectSuggestion({
+    id: Number(item.dataset.id),
+    title: item.dataset.title,
+    year: item.dataset.year || "",
+    mediaType: item.dataset.mediaType,
+  });
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".input-wrap")) hideSuggestions();
 });
 
 getShows().then(renderShows);
