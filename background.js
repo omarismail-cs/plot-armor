@@ -3,7 +3,7 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v4";
+const DETECTOR_VERSION = "v8";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|killed|murdered|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed)\b/i,
@@ -12,13 +12,18 @@ const SIGNAL_PATTERNS = {
   twistIdentity:
     /\b(real identity|true identity|is actually|was actually|double life|secretly)\b/i,
   nonSpoilerContext:
-    /\b(cast|casting|production|development|filming|designer|costume|ratings|rotten tomatoes|metacritic|review|critical consensus|release|soundtrack|music|announced|joined the cast|portray|portrayed|reception)\b/i,
+    /\b(cast|casting|production|development|filming|designer|costume|ratings|rotten tomatoes|metacritic|review|critical consensus|release|soundtrack|music|announced|joined the cast|portray|portrayed|reception|netflix|disney|hulu|amazon|apple tv|streaming|license|licens(?:ing|ed)|rights|renewed|showrunner|executive producer|distribution|distributor|broadcast|premiere|parental controls|home media|blu.ray|dvd|box set|season order|episode count|budget|filming location|spin.?off|crossover|cameo)\b/i,
   castingAnnouncement:
-    /\b(announced that|was cast as|joined the cast|return(?:s|ed) for|guest appearance|fbi agent|season one returners|in june|in july|in september|in november)\b/i,
+    /\b(announced that|was cast as|joined the cast|renewed for|return(?:s|ed) for|guest appearance|showrunner|executive producer|prior commitments|writers? for|fbi agent|season one returners|in june|in july|in september|in november)\b/i,
+  // Speculative/leak language — cancels casting/production hard-allows and forces LLM evaluation.
+  // "spotted on set", "reportedly returning as X", "seemingly appear" reveal character presences
+  // in unaired content and should NOT be treated as safe casting announcements.
+  speculativeLeak:
+    /\b(seemingly|reportedly|rumored|rumour|spotted on set|leaked|unconfirmed|allegedly|sources say|according to sources|return(?:s|ing)? as|appearing as)\b/i,
 };
 const DEATH_CUE_REGEX = /\b(dies|die|death|killed|murdered|slain|executed|fatal|killed off)\b/i;
 const HIGH_RISK_SECTION_REGEX = /\b(premise|plot|synopsis|story|characters?)\b/i;
-const LOW_RISK_SECTION_REGEX = /\b(casting|production|reception|reviews?|music|soundtrack)\b/i;
+const LOW_RISK_SECTION_REGEX = /\b(casting|production|reception|reviews?|music|soundtrack|broadcast|distribution|development|accolades?|home media|filming|notes|release|renewal|ratings)\b/i;
 const NARRATIVE_HISTORIAN_SYSTEM_PROMPT = `You are the Plot Armor Narrative Historian. Your job is to extract 100% accurate, canon-only spoilers for the show/movie provided.
 STRICT FACTUAL RULES:
 Death Accuracy: Only list characters in major_death_names if they actually die in the canon. For example, in Daredevil, Wilson Fisk does NOT die; he is imprisoned. Do NOT list characters who are merely defeated or arrested.
@@ -64,97 +69,37 @@ function normalizeList(values) {
   return output;
 }
 
-function looksGenericKeyword(value) {
-  const generic = new Set([
-    "chaos",
-    "dark secret",
-    "secret",
-    "manipulation",
-    "betrayal",
-    "conflict",
-    "twist",
-    "ending",
-    "finale",
-    "mystery",
-    "revenge",
-    "power",
-    "truth",
-  ]);
-  const lower = String(value || "").trim().toLowerCase();
-  return generic.has(lower);
-}
-
-function sanitizeDeathNames(names, showName) {
-  const blocked = new Set([
-    String(showName || "").trim().toLowerCase(),
-    "main character",
-    "protagonist",
-    "hero",
-    "villain",
-    "narrator",
-  ]);
-  return normalizeList(names)
-    .filter((name) => {
-      const lower = name.toLowerCase();
-      if (blocked.has(lower)) return false;
-      if (lower.length < 3) return false;
-      if (!/[a-z]/i.test(lower)) return false;
-      return true;
-    })
-    .slice(0, 12);
-}
-
-function sanitizeStatusChanges(changes) {
-  return normalizeList(changes)
-    .filter((change) => {
-      if (change.length < 10) return false;
-      // Require at least one relation/action verb to stay meaningful.
-      return /\b(is|was|revealed|betrays|becomes|returns|joins|leaves|killed|dies)\b/i.test(change);
-    })
-    .slice(0, 12);
-}
-
-function sanitizeTwists(twists) {
-  return normalizeList(twists)
-    .filter((twist) => twist.length >= 10)
-    .slice(0, 10);
-}
-
-function sanitizeHighRiskKeywords(keywords, showName) {
-  const normalizedShow = String(showName || "").trim().toLowerCase();
-  return normalizeList(keywords)
-    .filter((keyword) => {
-      const lower = keyword.toLowerCase();
-      if (!lower) return false;
-      if (lower === normalizedShow) return true;
-      if (looksGenericKeyword(lower)) return false;
-      if (lower.length < 4) return false;
-      return true;
-    })
-    .slice(0, 16);
-}
-
 function createFallbackContext(showName) {
   return {
-    major_death_names: [],
-    pivotal_twists: [`Major events from ${showName}.`],
-    status_changes: [],
-    high_risk_keywords: [showName],
+    key_characters: [],
+    character_deaths: [],
+    relationships: [],
+    event_facts: [],
+    outcomes: [],
+    safe_topics: ["casting", "reviews", "production", "soundtrack", "release date"],
   };
 }
 
-function normalizeShowContext(rawContext, showName) {
+function parseStoryGraph(rawContext, showName) {
   if (!rawContext || typeof rawContext !== "object") return createFallbackContext(showName);
 
-  const majorDeathNames = sanitizeDeathNames(rawContext.major_death_names, showName);
-  const pivotalTwists = sanitizeTwists(rawContext.pivotal_twists);
-  const statusChanges = sanitizeStatusChanges(rawContext.status_changes);
-  const highRiskKeywords = sanitizeHighRiskKeywords(rawContext.high_risk_keywords, showName);
+  const sanitizeStrings = (arr, maxLen, minChars = 8) =>
+    normalizeList(arr)
+      .filter((s) => String(s).trim().length >= minChars)
+      .slice(0, maxLen);
+
+  const sanitizeNames = (arr, maxLen) =>
+    normalizeList(arr)
+      .filter((s) => String(s).trim().length >= 2)
+      .slice(0, maxLen);
+
   return {
-    major_death_names: majorDeathNames,
-    pivotal_twists: pivotalTwists.length ? pivotalTwists : [`Major events from ${showName}.`],
-    status_changes: statusChanges,
-    high_risk_keywords: highRiskKeywords.length ? highRiskKeywords : [showName],
+    key_characters: sanitizeNames(rawContext.key_characters, 40),
+    character_deaths: sanitizeStrings(rawContext.character_deaths, 20),
+    relationships: sanitizeStrings(rawContext.relationships, 10),
+    event_facts: sanitizeStrings(rawContext.event_facts, 20),
+    outcomes: sanitizeStrings(rawContext.outcomes, 12),
+    safe_topics: sanitizeStrings(rawContext.safe_topics, 8, 3),
   };
 }
 
@@ -341,10 +286,12 @@ async function fetchTmdbMediaContext(mediaType, id) {
   );
   if (!details) return null;
 
-  const credits = await fetchTmdbJson(
-    `https://api.themoviedb.org/3/${mediaType}/${id}/credits?language=en-US`,
-    token
-  );
+  // TV: aggregate_credits covers all seasons. Movie: standard credits.
+  const creditsUrl =
+    mediaType === "tv"
+      ? `https://api.themoviedb.org/3/tv/${id}/aggregate_credits?language=en-US`
+      : `https://api.themoviedb.org/3/movie/${id}/credits?language=en-US`;
+  const credits = await fetchTmdbJson(creditsUrl, token);
   const keywordPayload = await fetchTmdbJson(
     mediaType === "tv"
       ? `https://api.themoviedb.org/3/tv/${id}/keywords`
@@ -352,9 +299,32 @@ async function fetchTmdbMediaContext(mediaType, id) {
     token
   );
 
-  const cast = Array.isArray(credits?.cast) ? credits.cast.slice(0, 15) : [];
+  // aggregate_credits stores character name under roles[0].character; standard credits use .character directly.
+  const rawCast = Array.isArray(credits?.cast) ? credits.cast : [];
+
+  let cast;
+  if (mediaType === "tv" && rawCast.some((e) => e?.total_episode_count != null)) {
+    // For TV aggregate_credits: keep actors who appear in >15% of total episodes,
+    // falling back to billing order if episode counts aren't available.
+    // This captures core cast from later seasons that aren't billed top-40 overall.
+    const totalEpisodes = details?.number_of_episodes || 1;
+    const threshold = Math.max(1, Math.floor(totalEpisodes * 0.15));
+    const frequent = rawCast.filter((e) => (e?.total_episode_count ?? 0) >= threshold);
+    // If the threshold is too aggressive (e.g. a 2-season show), fall back to top billing.
+    const pool = frequent.length >= 5 ? frequent : rawCast.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    // Sort by episode count descending so highest-presence actors rank first.
+    cast = pool
+      .sort((a, b) => (b.total_episode_count ?? 0) - (a.total_episode_count ?? 0))
+      .slice(0, 50);
+  } else {
+    // Movies or shows without episode count data: use billing order.
+    cast = rawCast.sort((a, b) => (a.order ?? 999) - (b.order ?? 999)).slice(0, 40);
+  }
+
   const actorNames = normalizeList(cast.map((entry) => entry?.name));
-  const characterNames = normalizeList(cast.map((entry) => entry?.character));
+  const characterNames = normalizeList(
+    cast.map((entry) => entry?.roles?.[0]?.character || entry?.character)
+  );
   const keywords = normalizeList(
     (Array.isArray(keywordPayload?.results)
       ? keywordPayload.results
@@ -365,11 +335,16 @@ async function fetchTmdbMediaContext(mediaType, id) {
   );
 
   let episodeTitles = [];
+  let episodeSummaries = [];
+  let mainSeasonNumbers = [];
   if (mediaType === "tv" && Array.isArray(details?.seasons)) {
     const seasonNumbers = details.seasons
       .map((season) => season?.season_number)
       .filter((num) => Number.isInteger(num) && num >= 0)
       .slice(0, 8);
+
+    // Numbered seasons only (exclude season 0 specials) for per-season LLM calls.
+    mainSeasonNumbers = seasonNumbers.filter((n) => n >= 1);
 
     const seasonPayloads = await Promise.all(
       seasonNumbers.map((seasonNumber) =>
@@ -379,11 +354,25 @@ async function fetchTmdbMediaContext(mediaType, id) {
         )
       )
     );
-    episodeTitles = normalizeList(
-      seasonPayloads
-        .flatMap((season) => (Array.isArray(season?.episodes) ? season.episodes : []))
-        .map((episode) => episode?.name)
-    ).slice(0, 40);
+
+    const allEpisodes = seasonPayloads.flatMap((season) =>
+      Array.isArray(season?.episodes) ? season.episodes : []
+    );
+
+    episodeTitles = normalizeList(allEpisodes.map((ep) => ep?.name)).slice(0, 40);
+
+    // Build compact per-season episode summaries: "S1E3 Title: overview"
+    // Keep overviews short (120 chars) to stay within prompt budget.
+    episodeSummaries = seasonPayloads.flatMap((season, idx) => {
+      const sNum = seasonNumbers[idx];
+      if (!sNum || sNum === 0) return [];
+      return (Array.isArray(season?.episodes) ? season.episodes : [])
+        .filter((ep) => ep?.name && ep?.overview)
+        .map((ep) => {
+          const overview = String(ep.overview).slice(0, 120).replace(/\n/g, " ");
+          return `S${sNum}E${ep.episode_number} ${ep.name}: ${overview}`;
+        });
+    });
   }
 
   return {
@@ -396,6 +385,8 @@ async function fetchTmdbMediaContext(mediaType, id) {
     characterNames,
     keywords,
     episodeTitles,
+    episodeSummaries,
+    mainSeasonNumbers,
   };
 }
 
@@ -411,51 +402,232 @@ async function resolveTmdbContext(showName, tmdbSelection = null) {
   return fetchTmdbMediaContext(first.mediaType, first.id);
 }
 
-async function learnShowContext(showName, tmdbContext = null) {
-  const contextBlock = tmdbContext
+
+function cleanWikitext(raw) {
+  return raw
+    .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1") // [[Link|label]] → label
+    .replace(/\{\{[^}]*\}\}/g, "")                     // {{templates}} → remove
+    .replace(/\[\[File:[^\]]*\]\]/gi, "")               // [[File:...]] → remove
+    .replace(/'''([^']*?)'''/g, "$1")                   // '''bold''' → text
+    .replace(/''([^']*?)''/g, "$1")                     // ''italic'' → text
+    .replace(/={2,6}\s*(.+?)\s*={2,6}/g, "")           // ==headers== → remove
+    .replace(/<[^>]+>/g, "")                            // HTML tags
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+// Strip streaming/studio prefixes that never appear in Wikipedia titles.
+// e.g. "Marvel's Daredevil" → "Daredevil", "Netflix's Narcos" → "Narcos"
+function wikiShortName(showName) {
+  return showName
+    .replace(/['']/g, "'")
+    .replace(/^(?:Marvel(?:'s)?|DC(?:'s)?|Netflix(?:'s)?|Amazon(?:'s)?|Hulu(?:'s)?|Apple(?:'s)?|Disney(?:\+|'s)?)\s+/i, "")
+    .trim();
+}
+
+async function fetchWikipediaEpisodes(showName, seasonNumber = null) {
+  const base = showName.replace(/['']/g, "'").trim();
+  const short = wikiShortName(showName); // e.g. "Daredevil" from "Marvel's Daredevil"
+  const names = short !== base ? [base, short] : [base];
+
+  // Build candidate titles from both the full name and the short name.
+  const candidates = seasonNumber
+    ? names.flatMap((n) => [
+        `${n} season ${seasonNumber}`,
+        `${n} (TV series) season ${seasonNumber}`,
+        `${n} (season ${seasonNumber})`,
+      ])
+    : names.flatMap((n) => [n, `${n} (TV series)`, `${n} (film)`, `${n} (miniseries)`]);
+
+  for (const title of candidates) {
+    const result = await fetchEpisodesFromTitle(title);
+    if (result) return result;
+  }
+
+  // Fallback: opensearch using both names to find the real canonical title.
+  if (seasonNumber) {
+    for (const searchName of names) {
+      try {
+        const searchResp = await fetch(
+          `https://en.wikipedia.org/w/api.php?action=opensearch` +
+            `&search=${encodeURIComponent(`${searchName} season ${seasonNumber}`)}` +
+            `&limit=6&format=json&origin=*`
+        );
+        if (!searchResp.ok) continue;
+        const searchData = await searchResp.json();
+        const titles = Array.isArray(searchData[1]) ? searchData[1] : [];
+        // Accept any result that mentions "season" and at least one word from the short name.
+        const shortWords = short.toLowerCase().split(/\s+/).filter((w) => w.length >= 4);
+        const match = titles.find(
+          (t) =>
+            t.toLowerCase().includes("season") &&
+            shortWords.some((w) => t.toLowerCase().includes(w))
+        );
+        if (match) {
+          const result = await fetchEpisodesFromTitle(match);
+          if (result) return result;
+        }
+      } catch (_) {}
+    }
+  }
+
+  return null;
+}
+
+async function fetchEpisodesFromTitle(title) {
+  const base = `https://en.wikipedia.org/w/api.php?format=json&origin=*&page=${encodeURIComponent(title)}`;
+  try {
+    // Step 1: get section list to find the Episodes / Plot section index.
+    const sectionsResp = await fetch(`${base}&action=parse&prop=sections`);
+    if (!sectionsResp.ok) return null;
+    const sectionsData = await sectionsResp.json();
+    if (sectionsData.error) return null;
+
+    const sections = sectionsData.parse?.sections || [];
+    const target = sections.find((s) => /^(Episodes?|Plot|Synopsis|Season overview)/i.test(s.line));
+    if (!target) return null;
+
+    // Step 2: fetch just that section as wikitext.
+    const sectionResp = await fetch(`${base}&action=parse&prop=wikitext&section=${target.index}`);
+    if (!sectionResp.ok) return null;
+    const sectionData = await sectionResp.json();
+    const wikitext = sectionData.parse?.wikitext?.["*"] || "";
+    const cleaned = cleanWikitext(wikitext);
+    if (cleaned.length < 100) return null;
+
+    // Cap at 8 000 chars to stay within prompt budget.
+    return cleaned.slice(0, 8000);
+  } catch (_) {
+    return null;
+  }
+}
+
+// Interleave arrays from multiple seasons so no single season dominates the cap.
+function roundRobin(arrays, limit) {
+  const result = [];
+  const seen = new Set();
+  const maxLen = Math.max(...arrays.map((a) => a.length), 0);
+  for (let i = 0; i < maxLen && result.length < limit; i++) {
+    for (const arr of arrays) {
+      if (i < arr.length && result.length < limit) {
+        const val = String(arr[i]).trim();
+        const key = val.toLowerCase();
+        if (val && !seen.has(key)) {
+          seen.add(key);
+          result.push(val);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+function mergeSeasonContexts(contexts) {
+  const seenChars = new Set();
+  const merged = { key_characters: [], character_deaths: [], relationships: [], event_facts: [], outcomes: [], safe_topics: [] };
+
+  // key_characters: deduplicate across seasons preserving order.
+  for (const ctx of contexts) {
+    for (const name of ctx.key_characters || []) {
+      const key = String(name).toLowerCase().trim();
+      if (key && !seenChars.has(key)) {
+        seenChars.add(key);
+        merged.key_characters.push(name);
+      }
+    }
+  }
+  merged.key_characters = merged.key_characters.slice(0, 50);
+
+  // List fields: round-robin so each season contributes equally before hitting the cap.
+  merged.character_deaths = roundRobin(contexts.map((c) => normalizeList(c.character_deaths || [])), 30);
+  merged.event_facts  = roundRobin(contexts.map((c) => normalizeList(c.event_facts  || [])), 30);
+  merged.outcomes     = roundRobin(contexts.map((c) => normalizeList(c.outcomes     || [])), 18);
+  merged.relationships= roundRobin(contexts.map((c) => normalizeList(c.relationships|| [])), 12);
+  merged.safe_topics  = roundRobin(contexts.map((c) => normalizeList(c.safe_topics  || [])),  8);
+  return merged;
+}
+
+async function learnShowContext(showName, tmdbContext = null, seasonNumber = null, wikiEpisodes = null) {
+  // Filter episode summaries to just this season when doing a per-season call.
+  const relevantSummaries = seasonNumber && tmdbContext?.episodeSummaries?.length
+    ? tmdbContext.episodeSummaries.filter((s) => s.startsWith(`S${seasonNumber}E`))
+    : tmdbContext?.episodeSummaries;
+
+  // Intentionally exclude character_names/actor_names — the LLM mirrors them back,
+  // biasing key_characters toward whoever TMDB bills highest (Season 1 cast).
+  const tmdbBlock = tmdbContext
     ? JSON.stringify(
         {
           canonical_title: tmdbContext.title,
-          original_title: tmdbContext.originalTitle,
           media_type: tmdbContext.mediaType,
           overview: tmdbContext.overview,
-          actor_names: tmdbContext.actorNames,
-          character_names: tmdbContext.characterNames,
+          episode_summaries: relevantSummaries?.length
+            ? relevantSummaries
+            : tmdbContext.episodeTitles,
           tmdb_keywords: tmdbContext.keywords,
-          episode_titles: tmdbContext.episodeTitles,
         },
         null,
         2
       )
-    : "No TMDB context found.";
+    : "No TMDB context available.";
 
-  const systemPrompt = `You are the Plot Armor Spoiler Assassin. Your job is to find the most 'radioactive' spoilers for the show provided.
-STRICT INSTRUCTIONS:
-Ignore the Premise: Do NOT include basic setup info (e.g., 'Matt is a lawyer'). Assume the user already knows how the show starts.
-Target the Twists: Focus ONLY on major character deaths, secret identities revealed, massive betrayals, and series-finale shocks.
-Be Specific: I need the names of people who die and the exact nature of the twists.
-Factual Accuracy: Only include things that actually happen in the canon.
-Use TMDB Grounding: Use the TMDB metadata below to stay grounded to the exact title/characters for this request.
-Categories to fill:
-major_death_names: Names of characters who die later in the series.
-pivotal_twists: The biggest shocks of the show.
-status_changes: Significant shifts in power or relationships.
-high_risk_keywords: 1-2 word phrases that are 'dead giveaways' for spoilers.
-Return as a flat JSON object with single-string array items. Analyze: ${showName}`;
+  const systemPrompt = `You are a story analyst for Plot Armor, an AI spoiler blocker.
+Your job is to build a structured story graph for the title provided so the system can accurately detect spoilers.
+
+RULES:
+- All entries must be 100% canon accurate. Do NOT hallucinate events.
+- key_characters = every named character who appears in THIS season — main cast, recurring, and supporting.
+  Use your own training knowledge. Include villain characters and one-season characters.
+  Do NOT include generic roles like "Officer #1" or "Elderly Man".
+- character_deaths = EVERY character who dies this season, one entry per death. This is the highest priority field.
+  Format: "[Character name] is killed by [killer] [method/context]."
+  Include ALL deaths — main cast, recurring, and supporting characters. Do not skip anyone.
+  If Wikipedia episode summaries are provided, scan every episode for deaths and list them all.
+  Example: "Father Paul Lantom is shot and killed by Dex Poindexter inside the church."
+  Example: "Ray Nadeem is executed by Dex Poindexter on Wilson Fisk's orders."
+  Example: "Benjamin Urich is murdered by Wilson Fisk in his office."
+  Example: "Nobu Yoshioka is burned alive after Daredevil causes an explosion."
+- event_facts = other major plot events: betrayals, identity reveals, twists, and key turning points.
+  Do NOT repeat deaths already listed in character_deaths.
+  Example: "Elektra Natchios is revealed to be the Black Sky, the weapon of the Hand."
+  Example: "Wilson Fisk manipulates the FBI by using Agent Nadeem as a pawn."
+- outcomes = final confirmed states for major characters and storylines at the END of this season.
+  Example: "Wilson Fisk is imprisoned but continues to control criminal networks from prison."
+- relationships = key character dynamics relevant to understanding spoilers.
+  Example: "Foggy Nelson is Matt's best friend and law partner who discovers his secret identity."
+- safe_topics = discussion topics that are explicitly NOT plot spoilers for this title.
+  Example: "fight choreography", "casting announcements", "Netflix renewal", "comic book comparisons".
+- Be specific with character names. Vague entries like "a major character dies" are useless.
+- If Wikipedia episode summaries are provided below, treat them as the PRIMARY source of plot events.
+  Extract character names, deaths, twists, and outcomes directly from that text first.
+  Use TMDB metadata and your own training knowledge as supplementary sources only.
+
+Return a JSON object with exactly these keys:
+  key_characters (array of character name strings, max 40)
+  character_deaths (array of strings, max 20)
+  relationships (array of strings, max 10)
+  event_facts (array of strings, max 20)
+  outcomes (array of strings, max 12)
+  safe_topics (array of strings, max 8)`;
+
   const raw = await callOpenAI(
     [
       { role: "system", content: systemPrompt },
       {
         role: "user",
-        content: `Forensically analyze the show/movie: ${showName}\n\nTMDB Context:\n${contextBlock}`,
+        content:
+          `Build the story graph for: ${showName}${seasonNumber ? ` Season ${seasonNumber}` : ""}` +
+          `\n\nTMDB Metadata:\n${tmdbBlock}` +
+          (wikiEpisodes ? `\n\nWikipedia Episode Summaries (PRIMARY SOURCE):\n${wikiEpisodes}` : ""),
       },
     ],
     0,
     { response_format: { type: "json_object" } }
   );
-  const jsonCandidate = stripToJsonObject(raw);
-  const parsed = JSON.parse(jsonCandidate);
-  return normalizeShowContext(parsed, showName);
+
+  const parsed = JSON.parse(stripToJsonObject(raw));
+  return parseStoryGraph(parsed, showName);
 }
 
 async function handleShowAdded(showName, _tmdbSelection = null) {
@@ -473,7 +645,41 @@ async function handleShowAdded(showName, _tmdbSelection = null) {
   }
 
   try {
-    context = await learnShowContext(showName, tmdbContext);
+    const seasons = tmdbContext?.mainSeasonNumbers || [];
+    if (seasons.length >= 2) {
+      // Multi-season TV: one focused LLM call per season, then merge.
+      // Cap at 5 seasons to limit API cost (covers the vast majority of shows).
+      const cappedSeasons = seasons.slice(0, 5);
+      console.info(`${LOG_PREFIX} Per-season story graph`, { showName, seasons: cappedSeasons });
+
+      // Fetch Wikipedia episode summaries for each season in parallel with each other.
+      const wikiResults = await Promise.all(
+        cappedSeasons.map((n) => fetchWikipediaEpisodes(showName, n).catch(() => null))
+      );
+      console.info(`${LOG_PREFIX} Wikipedia episodes fetched`, {
+        showName,
+        found: wikiResults.filter(Boolean).length,
+        total: cappedSeasons.length,
+      });
+
+      const seasonContexts = await Promise.all(
+        cappedSeasons.map((n, i) =>
+          learnShowContext(showName, tmdbContext, n, wikiResults[i] || null).catch((err) => {
+            console.warn(`${LOG_PREFIX} Season ${n} context failed`, { err });
+            return createFallbackContext(showName);
+          })
+        )
+      );
+      context = mergeSeasonContexts(seasonContexts);
+    } else {
+      // Single-season show or movie.
+      const wikiEpisodes = await fetchWikipediaEpisodes(showName).catch(() => null);
+      console.info(`${LOG_PREFIX} Wikipedia episodes fetched`, {
+        showName,
+        found: Boolean(wikiEpisodes),
+      });
+      context = await learnShowContext(showName, tmdbContext, null, wikiEpisodes);
+    }
   } catch (error) {
     console.error(`${LOG_PREFIX} Context fetch failed, using fallback`, { showName, error });
     context = createFallbackContext(showName);
@@ -482,18 +688,20 @@ async function handleShowAdded(showName, _tmdbSelection = null) {
 
   showContexts[showName] = context;
   // Store TMDB character/actor names directly so Tier 1 can match on them
-  // regardless of what OpenAI chose to include in its spoiler arrays.
+  // regardless of what the story graph includes.
   if (tmdbContext) {
     showContexts[showName].tmdb_character_names = tmdbContext.characterNames || [];
     showContexts[showName].tmdb_actor_names = tmdbContext.actorNames || [];
   }
   await chrome.storage.local.set({ [SHOW_CONTEXTS_KEY]: showContexts });
-  console.info(`${LOG_PREFIX} SHOW_ADDED stored context`, {
+  console.info(`${LOG_PREFIX} SHOW_ADDED stored story graph`, {
     showName,
-    deathNames: context.major_death_names.length,
-    twists: context.pivotal_twists.length,
-    statusChanges: context.status_changes.length,
-    highRiskKeywords: context.high_risk_keywords.length,
+    key_characters: context.key_characters.length,
+    character_deaths: context.character_deaths.length,
+    relationships: context.relationships.length,
+    event_facts: context.event_facts.length,
+    outcomes: context.outcomes.length,
+    safe_topics: context.safe_topics.length,
     tmdbGrounded: Boolean(tmdbContext),
     usedFallback,
   });
@@ -515,23 +723,29 @@ async function handleShowRemoved(showName) {
 
 function extractContextTerms(showContext, showName = "") {
   if (!showContext || typeof showContext !== "object") return [];
-  const deathNames = normalizeList(showContext.major_death_names);
-  const pivotalTwists = normalizeList(showContext.pivotal_twists);
-  const statusChanges = normalizeList(showContext.status_changes);
-  const highRiskKeywords = normalizeList(showContext.high_risk_keywords);
+
+  // LLM-generated key_characters covers all seasons; TMDB cast is a billing-order fallback.
+  const llmCharacters = normalizeList(showContext.key_characters);
   const tmdbCharacters = normalizeList(showContext.tmdb_character_names);
   const tmdbActors = normalizeList(showContext.tmdb_actor_names);
-  const terms = [...deathNames, ...highRiskKeywords, ...tmdbCharacters, ...tmdbActors];
-  const normalizedShowName = String(showName || "").trim();
-  if (normalizedShowName) {
-    terms.push(normalizedShowName);
-  }
+  const terms = [...llmCharacters, ...tmdbCharacters, ...tmdbActors];
 
-  [...statusChanges, ...pivotalTwists].forEach((line) => {
+  const normalizedShowName = String(showName || "").trim();
+  if (normalizedShowName) terms.push(normalizedShowName);
+
+  // Tokenize story graph lines so individual names inside sentences trip Tier 1.
+  // character_deaths is highest priority — tokenize it first.
+  const storyLines = [
+    ...normalizeList(showContext.character_deaths),
+    ...normalizeList(showContext.event_facts),
+    ...normalizeList(showContext.outcomes),
+    ...normalizeList(showContext.relationships),
+  ];
+  storyLines.forEach((line) => {
     line
-      .split(/[^A-Za-z0-9'’]+/)
+      .split(/[^A-Za-z0-9'']+/)
       .map((token) => token.trim())
-      .filter((token) => token.length >= 4)
+      .filter((token) => token.length >= 4 && !TIER1_TOKEN_BLOCKLIST.has(token.toLowerCase()))
       .forEach((token) => terms.push(token));
   });
 
@@ -582,30 +796,57 @@ function tier1AnalyzeShow(textToAnalyze, showContext, showName = "") {
   };
 }
 
-async function runSemanticJudge(showName, showContext, textToAnalyze) {
-  const contextBlock = JSON.stringify(
+async function runSemanticJudge(showName, showContext, textToAnalyze, precedingContext = "") {
+  const storyGraphBlock = JSON.stringify(
     {
-      major_death_names: showContext.major_death_names || [],
-      pivotal_twists: showContext.pivotal_twists || [],
-      status_changes: showContext.status_changes || [],
-      high_risk_keywords: showContext.high_risk_keywords || [],
+      character_deaths: showContext.character_deaths || [],
+      relationships: showContext.relationships || [],
+      event_facts: showContext.event_facts || [],
+      outcomes: showContext.outcomes || [],
+      safe_topics: showContext.safe_topics || [],
     },
     null,
     2
   );
-  const prompt = [
-    "You are a strict spoiler classifier for a spoiler blocker.",
-    "If text reveals plot outcomes, character fates, identity reveals, major twists, finales, betrayals, deaths, or arc resolutions, classify as spoiler.",
-    "When uncertain between spoiler vs not-spoiler, prefer spoiler for user safety.",
-    `Show: ${showName}`,
-    `Target spoiler context JSON:\n${contextBlock}`,
-    `Text to analyze: ${textToAnalyze}`,
-    'Return ONLY valid raw JSON with keys: "isSpoiler" (boolean), "confidence" (number 0..1), "reason" (short non-spoilery explanation).',
+
+  const systemPrompt = [
+    `You are a strict spoiler classifier for the media title: "${showName}".`,
+    "",
+    "Your job: using your own knowledge of this title, determine if the user-provided text",
+    "reveals ANY plot points, character deaths, narrative events, twists, or endings.",
+    "",
+    "Rules:",
+    "- Use your own training knowledge of this title as the primary source of truth.",
+    "- The story graph below is supplementary context — use it if helpful, but do NOT limit",
+    "  yourself to only flagging events that appear in it.",
+    "- DO NOT flag: acting reviews, casting news, release dates, production info, or genre commentary.",
+    "- DO flag: character deaths, betrayals, twists, identity reveals, relationship outcomes, endings.",
+    "- DO flag: reveals that a specific character appears in an unaired or future season/episode,",
+    "  even if framed as casting news, set reports, or speculation (e.g. 'spotted on set as X', 'seemingly returning as Y').",
+    "  Knowing a character appears in a season the user hasn't watched yet IS a spoiler.",
+    "- A plot event is a spoiler regardless of which season it occurs in.",
+    "",
+    `Supplementary story graph:\n${storyGraphBlock}`,
+    "",
+    'Respond with a JSON object with keys: "isSpoiler" (boolean), "confidence" (number 0..1), "reason" (one sentence).',
   ].join("\n");
 
-  const raw = await callOpenAI([{ role: "user", content: prompt }], 0);
-  const jsonCandidate = stripToJsonObject(raw);
+  const raw = await callOpenAI(
+    [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: precedingContext
+          ? `[Preceding sentence(s) — for pronoun/reference resolution only, do NOT classify these as spoilers]:\n"${precedingContext}"\n\n[Text to classify]:\n"${textToAnalyze}"`
+          : textToAnalyze,
+      },
+    ],
+    0,
+    { response_format: { type: "json_object" } }
+  );
 
+  const jsonCandidate = stripToJsonObject(raw);
+  console.info(`${LOG_PREFIX} runSemanticJudge raw`, { showName, raw });
   try {
     const parsed = JSON.parse(jsonCandidate);
     const confidence = Number(parsed?.confidence);
@@ -615,7 +856,6 @@ async function runSemanticJudge(showName, showContext, textToAnalyze) {
       reason: String(parsed?.reason || "").trim(),
     };
   } catch (_) {
-    // Fallback parser for non-JSON model outputs.
     const normalized = String(raw || "").trim().toLowerCase();
     const isSpoiler = normalized.startsWith("true");
     return {
@@ -653,6 +893,9 @@ function computeDeterministicSignals({
   const hasDeathCue = DEATH_CUE_REGEX.test(text);
   const looksLikeNonSpoilerContext = SIGNAL_PATTERNS.nonSpoilerContext.test(text);
   const looksLikeCastingAnnouncement = SIGNAL_PATTERNS.castingAnnouncement.test(text);
+  // Speculative/leak language overrides casting and production hard-allows —
+  // "spotted on set, seemingly returning as X" reveals character presences and must go to LLM.
+  const isSpeculativeLeak = SIGNAL_PATTERNS.speculativeLeak.test(text);
   const sectionRisk = getSectionRiskAdjustment(sectionHint);
   const deathNameHitCount = matchedShows.reduce((total, showName) => {
     const deathNames = normalizeList(showContexts?.[showName]?.major_death_names);
@@ -684,7 +927,12 @@ function computeDeterministicSignals({
     };
   }
 
-  if ((hasMajorCue || hasTwistIdentity) && strongestTier1MatchCount >= 2) {
+  if (
+    (hasMajorCue || hasTwistIdentity) &&
+    strongestTier1MatchCount >= 2 &&
+    !looksLikeCastingAnnouncement &&
+    !looksLikeNonSpoilerContext
+  ) {
     return {
       hardBlock: { matched: true, reason: "deterministic-major-cue" },
       hardAllow: { matched: false, reason: "" },
@@ -697,7 +945,7 @@ function computeDeterministicSignals({
     looksLikeNonSpoilerContext &&
     !hasRelationshipReveal &&
     !hasTwistIdentity &&
-    !hasMajorCue
+    !isSpeculativeLeak
   ) {
     return {
       hardBlock: { matched: false, reason: "" },
@@ -706,11 +954,30 @@ function computeDeterministicSignals({
     };
   }
 
-  if (looksLikeCastingAnnouncement && !hasRelationshipReveal && !hasMajorCue) {
+  // Casting/production context: must not be speculative/leak language.
+  // "spotted on set, seemingly returning as X" goes to LLM, not hard-allowed.
+  if (looksLikeCastingAnnouncement && !hasRelationshipReveal && !hasTwistIdentity && !isSpeculativeLeak) {
     return {
       hardBlock: { matched: false, reason: "" },
       hardAllow: { matched: true, reason: "deterministic-casting-context" },
       riskScore: Math.min(riskScore, -0.6),
+    };
+  }
+
+  // Section-level hard-allow: if the nearest heading is clearly non-plot
+  // (Production, Broadcast, Reception, etc.) skip the LLM entirely.
+  // A relationship reveal, identity twist, or speculative leak can still override this.
+  if (
+    sectionHint &&
+    LOW_RISK_SECTION_REGEX.test(sectionHint) &&
+    !hasRelationshipReveal &&
+    !hasTwistIdentity &&
+    !isSpeculativeLeak
+  ) {
+    return {
+      hardBlock: { matched: false, reason: "" },
+      hardAllow: { matched: true, reason: "deterministic-low-risk-section" },
+      riskScore: Math.min(riskScore, -0.7),
     };
   }
 
@@ -770,7 +1037,7 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
   return bestSnippet;
 }
 
-async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = "", containerTag = "") {
+async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = "", containerTag = "", precedingContext = "") {
   const originalText = String(textToAnalyze || "").trim();
   const text = originalText;
   if (!text) {
@@ -799,8 +1066,18 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   });
 
   // Tier 1: local fast pre-filter
+  // Exception: if the content self-labels as spoilers (e.g. "spoiler warning",
+  // "#spoilers", or a username containing "spoilers"), escalate to LLM anyway
+  // using all protected show contexts — the content is explicitly flagged as spoilery.
+  const selfLabelsSpoiler = /\bspoilers?\b/i.test(text);
   if (!matchedShows.length) {
-    return { isSpoiler: false, reason: "tier1-no-match" };
+    if (!selfLabelsSpoiler || !protectedShows.length) {
+      return { isSpoiler: false, reason: "tier1-no-match" };
+    }
+    // Self-labelled spoiler with no entity match — escalate using first protected show.
+    // The LLM will decide if it actually spoils anything the user cares about.
+    console.info(`${LOG_PREFIX} SEMANTIC_CHECK self-labelled spoiler, escalating to LLM`);
+    matchedShows.push(protectedShows[0]);
   }
 
   // Evaluate the highest-risk snippet inside long blocks for better relevance.
@@ -865,7 +1142,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     const showContext = showContexts[showName];
     if (!showContext) continue;
     try {
-      const verdict = await runSemanticJudge(showName, showContext, text);
+      const verdict = await runSemanticJudge(showName, showContext, text, precedingContext);
       const shouldBlur = verdict.isSpoiler && verdict.confidence >= dynamicThreshold;
       console.info(`${LOG_PREFIX} SEMANTIC_CHECK tier2 result`, {
         showName,
@@ -924,13 +1201,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const textToAnalyze = message?.textToAnalyze;
   const sectionHint = message?.sectionHint;
   const containerTag = message?.containerTag;
+  const precedingContext = message?.precedingContext;
 
   const run = async () => {
     if (type === "SHOW_ADDED" && showName) return handleShowAdded(showName, message?.tmdbSelection);
     if (type === "SHOW_REMOVED" && showName) return handleShowRemoved(showName);
     if (type === "TMDB_SEARCH") return { results: await searchTmdbTitles(message?.query) };
     if (type === "SEMANTIC_CHECK") {
-      return handleSemanticCheck(textToAnalyze, sender?.url || "", sectionHint, containerTag);
+      return handleSemanticCheck(textToAnalyze, sender?.url || "", sectionHint, containerTag, precedingContext);
     }
     if (type === "BLUR_APPLIED") {
       console.info(`${LOG_PREFIX} BLUR_APPLIED`, {
@@ -938,6 +1216,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         tagName: message?.tagName,
         textLength: message?.textLength,
         className: message?.className,
+      });
+      return { ok: true };
+    }
+    if (type === "REPORT_FALSE_POSITIVE") {
+      const local = await chrome.storage.local.get(["false_positives"]);
+      const list = Array.isArray(local.false_positives) ? local.false_positives : [];
+      list.push({
+        timestamp: new Date().toISOString(),
+        url: message?.url || "",
+        show: message?.show || "",
+        text: message?.text || "",
+        reason: message?.reason || "",
+        confidence: message?.confidence ?? null,
+        source: message?.source || "",
+      });
+      // Keep last 100 reports to avoid bloating storage.
+      await chrome.storage.local.set({ false_positives: list.slice(-100) });
+      console.info(`${LOG_PREFIX} REPORT_FALSE_POSITIVE saved`, {
+        show: message?.show,
+        reason: message?.reason,
+        total: list.length,
       });
       return { ok: true };
     }

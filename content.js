@@ -7,9 +7,9 @@ const VISIBLE_ATTR = "data-plot-armor-visible";
 const DEBUG = true;
 const MIN_TEXT_LENGTH = 40;
 const MAX_ANALYZE_CHARS = 900;
-const DEBOUNCE_MS = 250;
-const EVAL_CONCURRENCY_LIMIT = 2;
-const FALLBACK_SELECTOR = "[id='mw-content-text'] .mw-parser-output > p";
+const DEBOUNCE_MS = 100;
+const EVAL_CONCURRENCY_LIMIT = 5;
+const FALLBACK_SELECTOR = "[id='mw-content-text'] .mw-parser-output > p, [id='mw-content-text'] .mw-parser-output td.summary, [id='mw-content-text'] .mw-parser-output td.description";
 const FALLBACK_EXCLUDE_SELECTOR =
   "nav, .toc, .toclevel-1, .toclevel-2, .toclevel-3, .infobox, .references, .metadata, header, footer, aside";
 const REDDIT_COMMENT_SELECTOR =
@@ -41,7 +41,12 @@ function getCandidateSelector() {
     return 'article[data-testid="tweet"], [data-testid="cellInnerDiv"] article';
   }
   if (host.includes("wikipedia.org")) {
-    return "[id='mw-content-text'] .mw-parser-output > p, [id='mw-content-text'] .mw-parser-output > ul > li";
+    return [
+      "[id='mw-content-text'] .mw-parser-output > p",
+      "[id='mw-content-text'] .mw-parser-output > ul > li",
+      "[id='mw-content-text'] .mw-parser-output td.summary",
+      "[id='mw-content-text'] .mw-parser-output td.description",
+    ].join(", ");
   }
   return "article, [role='article'], main p";
 }
@@ -54,41 +59,78 @@ function injectStyles() {
   style.textContent = `
     .${BLUR_CLASS} {
       position: relative !important;
-      border-radius: 12px;
-    }
-
-    .${BLUR_CLASS} > :not(.${OVERLAY_CLASS}) {
-      filter: blur(8px) saturate(0.92) contrast(0.92);
-      transition: filter 0.2s ease, opacity 0.2s ease;
-      opacity: 0.9;
+      min-height: 2em;
       pointer-events: none;
     }
 
+    .plot-armor-blur-wrapper {
+      filter: blur(7px) saturate(0.9) contrast(0.9);
+      opacity: 0.85;
+      pointer-events: auto;
+      user-select: none;
+      cursor: pointer;
+      transition: filter 0.2s ease, opacity 0.2s ease;
+    }
+
     .${OVERLAY_CLASS} {
-      position: static;
+      position: absolute;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      text-align: center;
-      padding: 10px 16px;
-      width: fit-content;
-      max-width: min(95%, 560px);
-      margin: 10px auto 0 auto;
+      gap: 6px;
+      padding: 8px 18px;
+      width: max-content;
+      max-width: 460px;
       color: #ffffff;
       font-size: 13px;
       font-weight: 600;
-      line-height: 1.3;
-      background: rgba(16, 18, 25, 0.72);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.18);
+      line-height: 1.4;
+      white-space: nowrap;
+      background: rgba(14, 16, 22, 0.88);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 999px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
       z-index: 2147483647;
       cursor: pointer;
       user-select: none;
-      white-space: normal;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      transform: translate(-50%, -50%);
+    }
+
+    .plot-armor-report-btn {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 2px 10px;
+      font-size: 11px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.75);
+      background: rgba(14, 16, 22, 0.78);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+      cursor: pointer;
+      z-index: 2147483647;
+      pointer-events: auto;
+      user-select: none;
+      vertical-align: middle;
+      line-height: 1.8;
+      transition: color 0.15s, background 0.15s, border-color 0.15s;
+    }
+
+    .plot-armor-report-btn:hover {
+      color: #ff6b6b;
+      background: rgba(30, 16, 16, 0.92);
+      border-color: rgba(220, 80, 80, 0.55);
+    }
+
+    .plot-armor-report-btn.reported {
+      color: #6bff9e;
+      border-color: rgba(50, 220, 100, 0.5);
+      background: rgba(14, 30, 20, 0.88);
+      pointer-events: none;
     }
   `;
   document.head.appendChild(style);
@@ -102,29 +144,163 @@ function ensureContainerPosition(container) {
 }
 
 function revealContainer(container) {
+  // Read meta before clearing attributes.
+  const show = container.dataset.paShow || "";
+  const reason = container.dataset.paReason || "";
+  const confidence = container.dataset.paConfidence || null;
+  const source = container.dataset.paSource || "";
+
   container.classList.remove(BLUR_CLASS);
   container.removeAttribute("data-plot-armor-blurred");
+  delete container.dataset.paShow;
+  delete container.dataset.paReason;
+  delete container.dataset.paConfidence;
+  delete container.dataset.paSource;
+  container.style.position = "";
+
   const overlay = container.querySelector(`:scope > .${OVERLAY_CLASS}`);
   if (overlay) overlay.remove();
+  const existingReport = container.querySelector(".plot-armor-report-btn");
+  if (existingReport) existingReport.remove();
+
+  // Unwrap blurred content wrapper back into the container.
+  const wrapper = container.querySelector(":scope > .plot-armor-blur-wrapper");
+  if (wrapper) {
+    while (wrapper.firstChild) container.insertBefore(wrapper.firstChild, wrapper);
+    wrapper.remove();
+  }
+
+  // Show the report button AFTER reveal so the user can read the content first.
+  const reportBtn = document.createElement("button");
+  reportBtn.className = "plot-armor-report-btn";
+  reportBtn.textContent = "⚑ not a spoiler?";
+  reportBtn.title = "Report this as a false positive";
+  reportBtn.style.setProperty("pointer-events", "auto", "important");
+
+  let autoRemoveTimer = setTimeout(() => reportBtn.remove(), 10000);
+
+  reportBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    clearTimeout(autoRemoveTimer);
+    reportBtn.textContent = "✓ logged";
+    reportBtn.classList.add("reported");
+    chrome.runtime.sendMessage({
+      type: "REPORT_FALSE_POSITIVE",
+      text: extractContainerText(container).slice(0, 500),
+      show,
+      reason,
+      confidence: confidence !== "" ? Number(confidence) : null,
+      source,
+      url: location.href,
+    }).catch(() => {});
+    setTimeout(() => reportBtn.remove(), 1200);
+  });
+
+  // Inject inline at the end of the last text-bearing child so the button
+  // flows naturally after the last word without overlapping anything.
+  const lastTextChild = Array.from(container.childNodes)
+    .reverse()
+    .find((n) => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent.trim()));
+  if (lastTextChild && lastTextChild.nodeType === Node.ELEMENT_NODE) {
+    lastTextChild.appendChild(reportBtn);
+  } else {
+    container.appendChild(reportBtn);
+  }
 }
 
-function blurContainer(container) {
+function blurContainer(container, meta = {}) {
   if (container.classList.contains(BLUR_CLASS)) return;
   ensureContainerPosition(container);
 
+  // Wrap ALL child nodes (including bare text nodes) in a single div so
+  // the blur filter covers everything, not just element children.
+  // On Reddit, nested comment containers must stay outside the wrapper so
+  // each reply is evaluated and revealed independently.
+  const blurWrapper = document.createElement("div");
+  blurWrapper.className = "plot-armor-blur-wrapper";
+
+  const isReddit = location.hostname.toLowerCase().includes("reddit.com");
+  const childSnapshot = Array.from(container.childNodes);
+  const skippedChildren = [];
+
+  childSnapshot.forEach((node) => {
+    const isNestedComment =
+      isReddit &&
+      node.nodeType === Node.ELEMENT_NODE &&
+      node.matches &&
+      node.matches(REDDIT_COMMENT_SELECTOR);
+    if (isNestedComment) {
+      skippedChildren.push(node);
+    } else {
+      blurWrapper.appendChild(node);
+    }
+  });
+
+  blurWrapper.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    revealContainer(container);
+  });
+
+  container.appendChild(blurWrapper);
+  // Re-attach nested comments after the wrapper so they remain independent.
+  skippedChildren.forEach((node) => container.appendChild(node));
+
   container.classList.add(BLUR_CLASS);
   container.setAttribute("data-plot-armor-blurred", "1");
+
   const overlay = document.createElement("div");
   overlay.className = OVERLAY_CLASS;
-  overlay.textContent = "🛡️ Hidden by Plot Armor. Click to reveal.";
+  overlay.textContent = "🛡️ Hidden by Plot Armor — click to reveal";
   overlay.style.setProperty("z-index", "2147483647", "important");
   overlay.style.setProperty("pointer-events", "auto", "important");
+  // Store meta on the element so revealContainer can attach the report button after reveal.
+  container.dataset.paShow = meta.matchedShow || "";
+  container.dataset.paReason = meta.reason || "";
+  container.dataset.paConfidence = meta.confidence ?? "";
+  container.dataset.paSource = meta.source || "";
+
   overlay.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
     revealContainer(container);
   });
   container.appendChild(overlay);
+
+  // Use Range.getClientRects() to find the actual visual bounding box of the
+  // text content. Unlike getBoundingClientRect() on a block element, this
+  // accounts for CSS floats that make the container wider than the text area.
+  requestAnimationFrame(() => {
+    const cRect = container.getBoundingClientRect();
+    let cx, cy;
+
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(blurWrapper);
+      const lineRects = Array.from(range.getClientRects()).filter(
+        (r) => r.width > 2 && r.height > 2
+      );
+      if (lineRects.length > 0) {
+        const minLeft = Math.min(...lineRects.map((r) => r.left));
+        const maxRight = Math.max(...lineRects.map((r) => r.right));
+        const minTop = Math.min(...lineRects.map((r) => r.top));
+        const maxBottom = Math.max(...lineRects.map((r) => r.bottom));
+        cx = (minLeft + maxRight) / 2 - cRect.left;
+        cy = (minTop + maxBottom) / 2 - cRect.top;
+      }
+    } catch (_) {}
+
+    if (cx == null || cy == null) {
+      const wRect = blurWrapper.getBoundingClientRect();
+      cx = wRect.left - cRect.left + wRect.width / 2;
+      cy = wRect.top - cRect.top + wRect.height / 2;
+    }
+
+    overlay.style.top = `${cy}px`;
+    overlay.style.left = `${cx}px`;
+  });
+
   debugLog("Blur applied", {
     tag: container.tagName,
     className: container.className,
@@ -164,6 +340,24 @@ function debugLog(message, payload) {
 
 function normalizeHeadingText(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+function getPrecedingContext(container) {
+  let sibling = container.previousElementSibling;
+  while (sibling) {
+    // Stop at headings or non-text structural elements — they don't give pronoun context.
+    if (/^(H[1-6]|TABLE|FIGURE|FIGCAPTION|NAV|ASIDE|UL|OL)$/.test(sibling.tagName)) break;
+    if (sibling.closest(FALLBACK_EXCLUDE_SELECTOR)) break;
+
+    const text = (sibling.innerText || "").replace(/\s+/g, " ").trim();
+    if (text.length >= 20) {
+      // Take the last 2 sentences, capped at 250 chars — enough for pronoun resolution.
+      const sentences = text.split(/(?<=[.!?])\s+/);
+      return sentences.slice(-2).join(" ").slice(-250).trim();
+    }
+    sibling = sibling.previousElementSibling;
+  }
+  return "";
 }
 
 function getSectionHint(container) {
@@ -214,23 +408,34 @@ async function evaluateContainer(container) {
   }
   const analysisText = textToAnalyze.slice(0, MAX_ANALYZE_CHARS);
   const sectionHint = getSectionHint(container);
-  debugLog("Evaluating container", { textLength: textToAnalyze.length, tag: container.tagName });
+  const precedingContext = getPrecedingContext(container);
+  debugLog("Evaluating container", { textLength: textToAnalyze.length, tag: container.tagName, hasPrecedingContext: Boolean(precedingContext) });
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "SEMANTIC_CHECK",
       textToAnalyze: analysisText,
+      precedingContext,
       sectionHint,
       containerTag: container.tagName,
     });
     debugLog("Semantic check response", response?.data || response);
 
     if (response?.ok && response.data?.isSpoiler) {
-      blurContainer(container);
+      blurContainer(container, {
+        matchedShow: response.data?.matchedShow || "",
+        reason: response.data?.reason || "",
+        confidence: response.data?.confidence ?? null,
+        source: response.data?.source || "",
+      });
       debugLog("Container blurred", { reason: response.data?.reason });
     }
   } catch (error) {
-    console.error("Plot Armor semantic request failed", error);
+    if (isContextInvalidated(error)) {
+      shutdownObservers();
+    } else {
+      console.error("Plot Armor semantic request failed", error);
+    }
   } finally {
     container.setAttribute(PROCESSED_ATTR, "1");
   }
@@ -250,19 +455,33 @@ function pumpEvaluationQueue() {
   }
 }
 
-function enqueueEvaluation(container) {
+function enqueueEvaluation(container, priority = false) {
   if (!(container instanceof Element)) return;
   if (container.getAttribute(PROCESSED_ATTR) === "1") return;
-  if (queuedContainers.has(container)) return;
+  if (queuedContainers.has(container)) {
+    // Already queued — if now high priority, move to front.
+    if (priority) {
+      const idx = pendingEvaluationQueue.indexOf(container);
+      if (idx > 0) {
+        pendingEvaluationQueue.splice(idx, 1);
+        pendingEvaluationQueue.unshift(container);
+      }
+    }
+    return;
+  }
   queuedContainers.add(container);
-  pendingEvaluationQueue.push(container);
+  if (priority) {
+    pendingEvaluationQueue.unshift(container);
+  } else {
+    pendingEvaluationQueue.push(container);
+  }
   pumpEvaluationQueue();
 }
 
 function processVisibleContainers() {
   visibleContainers.forEach((container) => {
     if (container.getAttribute(VISIBLE_ATTR) === "1") {
-      enqueueEvaluation(container);
+      enqueueEvaluation(container, true);
     }
   });
 }
@@ -279,14 +498,16 @@ const intersectionObserver = new IntersectionObserver(
       if (entry.isIntersecting) {
         container.setAttribute(VISIBLE_ATTR, "1");
         visibleContainers.add(container);
+        // Enqueue immediately with priority so content the user can actually
+        // see is processed before off-screen paragraphs already in the queue.
+        enqueueEvaluation(container, true);
       } else {
         container.setAttribute(VISIBLE_ATTR, "0");
         visibleContainers.delete(container);
       }
     });
-    debounceProcessVisible();
   },
-  { root: null, rootMargin: "200px 0px", threshold: 0.05 }
+  { root: null, rootMargin: "400px 0px", threshold: 0.05 }
 );
 
 function observeContainer(container) {
@@ -294,9 +515,9 @@ function observeContainer(container) {
   if (shouldSkipContainer(container)) return;
   if (observedContainers.has(container)) return;
   observedContainers.add(container);
+  // IntersectionObserver fires immediately for elements already in viewport,
+  // so no separate enqueue needed here — visible ones get priority-queued there.
   intersectionObserver.observe(container);
-  // Immediate first pass so initial viewport content is not missed.
-  enqueueEvaluation(container);
 }
 
 function shouldSkipContainer(container) {
@@ -346,7 +567,26 @@ function discoverContainers(root = document) {
   }
 }
 
+function isContextInvalidated(error) {
+  return (
+    error instanceof Error &&
+    (error.message.includes("Extension context invalidated") ||
+      error.message.includes("Could not establish connection"))
+  );
+}
+
+let observersStopped = false;
+function shutdownObservers() {
+  if (observersStopped) return;
+  observersStopped = true;
+  mutationObserver.disconnect();
+  intersectionObserver.disconnect();
+  pendingEvaluationQueue.length = 0;
+  debugLog("Extension context lost — observers shut down. Reload the page to re-activate Plot Armor.");
+}
+
 const mutationObserver = new MutationObserver((mutations) => {
+  if (observersStopped) return;
   mutations.forEach((mutation) => {
     mutation.addedNodes.forEach((node) => {
       if (node.nodeType === Node.ELEMENT_NODE) {
@@ -368,6 +608,7 @@ function resetAndReevaluate() {
 }
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (observersStopped) return;
   const localContextChanged = areaName === "local" && Boolean(changes.showContexts);
   const syncShowsChanged = areaName === "sync" && Boolean(changes.protectedShows);
   if (!localContextChanged && !syncShowsChanged) return;

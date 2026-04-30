@@ -20,9 +20,14 @@ function renderShows(shows) {
 
   shows.forEach((show) => {
     const item = document.createElement("li");
+    item.dataset.show = show;
+
     const showName = document.createElement("span");
     showName.className = "show-name";
     showName.textContent = show;
+
+    const statusEl = document.createElement("span");
+    statusEl.className = "show-status";
 
     const removeBtn = document.createElement("button");
     removeBtn.className = "remove-btn";
@@ -31,9 +36,19 @@ function renderShows(shows) {
     removeBtn.dataset.show = show;
 
     item.appendChild(showName);
+    item.appendChild(statusEl);
     item.appendChild(removeBtn);
     listEl.appendChild(item);
   });
+}
+
+function setShowStatus(showName, status) {
+  const item = listEl.querySelector(`li[data-show="${CSS.escape(showName)}"]`);
+  if (!item) return;
+  const statusEl = item.querySelector(".show-status");
+  if (!statusEl) return;
+  statusEl.className = "show-status" + (status ? ` status-${status}` : "");
+  statusEl.title = status === "error" ? "Failed to load story — try removing and re-adding" : "";
 }
 
 function getShows() {
@@ -52,22 +67,23 @@ function setShows(shows) {
 
 function requestKeywordRefresh(show, isRefresh = false, tmdbSelection = null) {
   console.info("[Plot Armor popup] Sending show to background", { show, isRefresh, tmdbSelection });
-  chrome.runtime.sendMessage(
-    { type: "SHOW_ADDED", showName: show, tmdbSelection: tmdbSelection || undefined },
-    (response) => {
-    if (chrome.runtime.lastError) {
-      console.error("Plot Armor background message error:", chrome.runtime.lastError.message);
-      return;
-    }
-
-    if (!response?.ok) {
-      console.error("Plot Armor failed to fetch keywords:", response?.error || "Unknown error");
-      return;
-    }
-
-    console.info("[Plot Armor popup] Background processing succeeded", response.data);
-    }
-  );
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: "SHOW_ADDED", showName: show, tmdbSelection: tmdbSelection || undefined },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response?.ok) {
+          reject(new Error(response?.error || "Unknown error"));
+          return;
+        }
+        console.info("[Plot Armor popup] Background processing succeeded", response.data);
+        resolve(response.data);
+      }
+    );
+  });
 }
 
 function requestShowRemoval(show) {
@@ -90,30 +106,37 @@ function requestShowRemoval(show) {
 async function addShow() {
   const typed = inputEl.value.trim();
   const show = selectedSuggestion?.title || typed;
+  const tmdbSel = selectedSuggestion;
 
   if (!show) return;
+
+  // Clear input immediately so the user can keep browsing.
+  inputEl.value = "";
+  selectedSuggestion = null;
+  hideSuggestions();
 
   const shows = await getShows();
   const exists = shows.some((item) => item.toLowerCase() === show.toLowerCase());
 
-  if (exists) {
-    requestKeywordRefresh(show, true, selectedSuggestion);
-    inputEl.value = "";
-    selectedSuggestion = null;
-    hideSuggestions();
-    return;
+  if (!exists) {
+    const updatedShows = [...shows, show];
+    await setShows(updatedShows);
+    console.info("[Plot Armor popup] Added show to sync storage", { show });
+    renderShows(updatedShows);
   }
 
-  const updatedShows = [...shows, show];
-  await setShows(updatedShows);
-  console.info("[Plot Armor popup] Added show to sync storage", { show });
+  // Show spinner on the list item while the story graph is being built.
+  setShowStatus(show, "loading");
 
-  requestKeywordRefresh(show, false, selectedSuggestion);
-
-  renderShows(updatedShows);
-  inputEl.value = "";
-  selectedSuggestion = null;
-  hideSuggestions();
+  try {
+    await requestKeywordRefresh(show, exists, tmdbSel);
+    setShowStatus(show, "success");
+    // Auto-clear the checkmark after 2 s.
+    setTimeout(() => setShowStatus(show, ""), 2000);
+  } catch (err) {
+    console.error("[Plot Armor popup] Story graph failed", err);
+    setShowStatus(show, "error");
+  }
 }
 
 addBtn.addEventListener("click", addShow);
