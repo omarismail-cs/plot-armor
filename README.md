@@ -1,88 +1,111 @@
 # Plot Armor
 
-Plot Armor is a Chrome extension that tries to protect you from spoilers while you scroll.
+Plot Armor is a Chrome extension that helps reduce spoiler exposure while browsing.
 
-Most spoiler blockers only look for exact words. Plot Armor also checks context, so it can still catch spoilers even when the show name is not written directly.
+Unlike pure keyword blockers, it combines local matching and semantic checks so it can still catch spoilers when the show title is not written directly.
 
-## What it does right now
+## UI preview
 
-- You add shows you want protected.
-- The extension builds a spoiler context for each show using OpenAI.
-- It scans content on pages like Reddit/Wikipedia (and other article-like pages).
-- It runs a hybrid check:
-  - fast local rules
-  - then semantic AI check when needed
-- If something looks like a spoiler, it blurs the container.
-- You can click to reveal.
+Current popup UI:
+
+![Plot Armor popup UI](./docs/popup-preview.png)
+
+## Current status
+
+This is an active in-progress build (not production-hardened yet).
+
+What works today:
+
+- Add and remove protected titles from the popup.
+- Toggle protection per title, plus pause all / enable all controls.
+- TMDB-backed title suggestions (with poster thumbnails) while adding shows.
+- Story context generation per title using TMDB metadata + OpenAI (with Wikipedia summaries when available).
+- Hybrid detection pipeline:
+  - Tier 1 deterministic/entity matching
+  - Tier 2 semantic OpenAI classification when needed
+- Blur + click-to-reveal behavior for likely spoiler content.
+- False-positive reporting signal (`Not a spoiler?`) capture for later tuning.
+- Multi-title semantic optimization: when one block matches multiple protected titles, the background service uses one combined LLM call instead of per-title sequential calls.
+- Better popup UX polish (loading states, active/standby header state, improved readability and scrollbar styling).
 
 ## Tech stack
 
 - Chrome Extension (Manifest V3)
 - JavaScript
 - OpenAI Chat Completions API
+- TMDB API
 - Chrome Storage API (`sync` + `local`)
 - `MutationObserver` + `IntersectionObserver`
 
 ## Project files
 
-- `manifest.json` - extension config
-- `popup.html` / `popup.js` - add/remove protected shows
-- `background.js` - spoiler engine + OpenAI calls + cache
-- `content.js` - page scanning + blur UI
-- `.env` - OpenAI API key
+- `manifest.json` - extension configuration
+- `popup.html` / `popup.js` - popup UI and title management
+- `background.js` - context generation, spoiler engine, API calls, cache
+- `content.js` - page scanning, blur/reveal UI, observer orchestration
+- `.env` - local API credentials (not committed)
 
 ## Setup
 
 1. Clone this repo.
-2. Create/update `.env` in project root:
+2. Create/update `.env` in the project root:
 
 ```env
-OPENAI_API_KEY=your_key_here
+OPENAI_API_KEY=your_openai_key
+TMDB_READ_ACCESS_TOKEN=your_tmdb_read_token
 ```
 
-3. Open Chrome and go to `chrome://extensions`.
-4. Turn on **Developer mode**.
-5. Click **Load unpacked** and choose this folder.
+3. Open `chrome://extensions`.
+4. Enable **Developer mode**.
+5. Click **Load unpacked** and select this project folder.
 
-## How to use
+## Usage
 
-1. Click the Plot Armor extension icon.
-2. Add a show (example: `Daredevil`).
-3. Open pages with possible spoilers.
-4. Spoiler blocks should blur with a **click to reveal** control.
+1. Open the Plot Armor popup.
+2. Add one or more titles to protect.
+3. Browse content pages (for example Reddit or Wikipedia).
+4. If a block is classified as likely spoiler content, it is blurred and can be revealed manually.
 
-## Quick test flow
+## Quick debug checklist
 
-1. Add a show in the popup.
-2. Open service worker console from `chrome://extensions`.
-3. Check stored context:
+1. Open the extension service worker console from `chrome://extensions`.
+2. Check saved state:
 
 ```js
-chrome.storage.local.get(["showContexts"], console.log);
-chrome.storage.sync.get(["protectedShows"], console.log);
+chrome.storage.sync.get(["protectedShows", "activeProtectedShows"], console.log);
+chrome.storage.local.get(["showContexts", "evalCache", "false_positives"], console.log);
 ```
 
-4. Clear verdict cache before fresh testing:
+3. Clear semantic verdict cache before retesting:
 
 ```js
 chrome.storage.local.set({ evalCache: {} });
 ```
 
+4. Clear generated show contexts for a fresh rebuild:
+
+```js
+chrome.storage.local.set({ showContexts: {} });
+```
+
 ## Current known limits
 
-- It is still being tuned. Some spoilers can be missed.
-- Some non-spoiler lines can still get blurred.
-- Different Reddit/Wiki layouts can behave a little differently.
-- AI output quality can vary, so context cleanup rules matter.
+- Detection precision is still being tuned (both false positives and misses occur).
+- Results vary by page structure; Reddit and Wikipedia layouts are not fully uniform.
+- LLM latency can still be noticeable on some pages.
+- Context quality depends on upstream data quality and model consistency.
 
-## Roadmap (next)
+## Near-term priorities
 
-- Better comment-level handling across Reddit layouts
-- Stronger precision on relationship/twist spoilers
-- Cleaner testing harness for snippet accuracy checks
-- User progress awareness (block only beyond where user is)
+- Reduce latency further (smarter gating, lower round trips).
+- Improve comment-level precision on Reddit.
+- Add a repeatable local fixture harness for spoiler/non-spoiler regression checks.
+- Strengthen deterministic handling for relationship/twist edge cases.
+- Add user progress awareness (block content beyond watched progress only).
 
 ## Safety note
 
-This project sends text to OpenAI for analysis. Do not use your real API key in screenshots or commits.
+This project sends page text snippets to OpenAI for analysis.
+
+Do not commit real API keys, and avoid sharing screenshots that expose credentials.
 
