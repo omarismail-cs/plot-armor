@@ -6,13 +6,24 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
 
 ## UI preview
 
-**Popup** — protected list, per-title toggles, and TMDB search (Add stays disabled until you pick a suggestion):
+Scaled for the README (GitHub will still open full-size if you click an image).
 
-![Plot Armor popup UI](./docs/popup-preview.png)
-
-**TMDB suggestions** — live search with posters and type/year labels; select a row, then **Add**:
-
-![Plot Armor TMDB search dropdown](./docs/popup-tmdb-dropdown.png)
+<table>
+  <tr>
+    <th align="center" width="50%">Popup</th>
+    <th align="center" width="50%">TMDB suggestions</th>
+  </tr>
+  <tr valign="top">
+    <td align="center">
+      <img src="./docs/popup-preview.png" width="320" alt="Plot Armor popup: shield list and search field" />
+      <p align="center"><sub>Protected shows, per-title toggles, search. <strong>Add</strong> stays off until you pick a suggestion.</sub></p>
+    </td>
+    <td align="center">
+      <img src="./docs/popup-tmdb-dropdown.png" width="320" alt="Plot Armor TMDB dropdown with posters and year labels" />
+      <p align="center"><sub>Live TMDB results with posters and type/year; choose a row, then <strong>Add</strong>.</sub></p>
+    </td>
+  </tr>
+</table>
 
 ## Current status
 
