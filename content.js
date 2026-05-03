@@ -63,6 +63,20 @@ function injectStyles() {
       pointer-events: none;
     }
 
+    /* X/Twitter: do not rely on filter on <article> — video/GPU layers and
+       site CSS often leave media sharp. A full-bleed veil + backdrop-filter
+       obscures the card reliably. */
+    .plot-armor-x-veil {
+      position: absolute;
+      inset: 0;
+      z-index: 2147483645;
+      pointer-events: none;
+      border-radius: inherit;
+      background: rgba(9, 9, 11, 0.52);
+      backdrop-filter: blur(16px) saturate(0.82);
+      -webkit-backdrop-filter: blur(16px) saturate(0.82);
+    }
+
     .plot-armor-blur-wrapper {
       filter: blur(7px) saturate(0.9) contrast(0.9);
       opacity: 0.85;
@@ -72,64 +86,102 @@ function injectStyles() {
       transition: filter 0.2s ease, opacity 0.2s ease;
     }
 
+    .plot-armor-intercept {
+      position: absolute;
+      inset: 0;
+      z-index: 2147483646;
+      cursor: pointer;
+      background: transparent;
+      pointer-events: auto;
+    }
+
     .${OVERLAY_CLASS} {
       position: absolute;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      padding: 8px 18px;
+      gap: 8px;
+      padding: 7px 14px;
       width: max-content;
       max-width: 460px;
-      color: #ffffff;
-      font-size: 13px;
-      font-weight: 600;
+      color: #fafafa;
+      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: -0.005em;
       line-height: 1.4;
       white-space: nowrap;
-      background: rgba(14, 16, 22, 0.88);
+      text-transform: lowercase;
+      background: rgba(9, 9, 11, 0.92);
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 999px;
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
       z-index: 2147483647;
       cursor: pointer;
       user-select: none;
       transform: translate(-50%, -50%);
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .${OVERLAY_CLASS}:hover {
+      background: rgba(15, 17, 23, 0.96);
+      border-color: rgba(255, 255, 255, 0.16);
+    }
+
+    .plot-armor-overlay-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: #3b82f6;
+      box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+      flex-shrink: 0;
+    }
+
+    .plot-armor-overlay-text {
+      color: #fafafa;
+    }
+
+    .plot-armor-overlay-cta {
+      color: #a1a1aa;
     }
 
     .plot-armor-report-btn {
       display: inline-block;
       margin-left: 8px;
-      padding: 2px 10px;
+      padding: 3px 10px;
+      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
       font-size: 11px;
       font-weight: 500;
-      color: rgba(255, 255, 255, 0.75);
-      background: rgba(14, 16, 22, 0.78);
+      letter-spacing: -0.005em;
+      text-transform: lowercase;
+      color: #a1a1aa;
+      background: rgba(9, 9, 11, 0.85);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(39, 39, 42, 0.9);
       border-radius: 999px;
-      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
       cursor: pointer;
       z-index: 2147483647;
       pointer-events: auto;
       user-select: none;
       vertical-align: middle;
-      line-height: 1.8;
+      line-height: 1.6;
       transition: color 0.15s, background 0.15s, border-color 0.15s;
     }
 
     .plot-armor-report-btn:hover {
-      color: #ff6b6b;
-      background: rgba(30, 16, 16, 0.92);
-      border-color: rgba(220, 80, 80, 0.55);
+      color: #fafafa;
+      background: rgba(15, 17, 23, 0.92);
+      border-color: rgba(255, 255, 255, 0.16);
     }
 
     .plot-armor-report-btn.reported {
-      color: #6bff9e;
-      border-color: rgba(50, 220, 100, 0.5);
-      background: rgba(14, 30, 20, 0.88);
+      color: #86efac;
+      border-color: rgba(34, 197, 94, 0.4);
+      background: rgba(14, 30, 20, 0.85);
       pointer-events: none;
     }
   `;
@@ -141,6 +193,11 @@ function ensureContainerPosition(container) {
   if (computed.position === "static") {
     container.style.position = "relative";
   }
+}
+
+function isXHost() {
+  const host = location.hostname.toLowerCase();
+  return host.includes("twitter.com") || host.includes("x.com");
 }
 
 function revealContainer(container) {
@@ -160,10 +217,15 @@ function revealContainer(container) {
 
   const overlay = container.querySelector(`:scope > .${OVERLAY_CLASS}`);
   if (overlay) overlay.remove();
+  const veil = container.querySelector(":scope > .plot-armor-x-veil");
+  if (veil) veil.remove();
+  const intercept = container.querySelector(`:scope > .plot-armor-intercept`);
+  if (intercept) intercept.remove();
   const existingReport = container.querySelector(".plot-armor-report-btn");
   if (existingReport) existingReport.remove();
 
   // Unwrap blurred content wrapper back into the container.
+  // No-op when the host-blur path was used (e.g. X) since there is no wrapper.
   const wrapper = container.querySelector(":scope > .plot-armor-blur-wrapper");
   if (wrapper) {
     while (wrapper.firstChild) container.insertBefore(wrapper.firstChild, wrapper);
@@ -173,7 +235,7 @@ function revealContainer(container) {
   // Show the report button AFTER reveal so the user can read the content first.
   const reportBtn = document.createElement("button");
   reportBtn.className = "plot-armor-report-btn";
-  reportBtn.textContent = "⚑ not a spoiler?";
+  reportBtn.textContent = "not a spoiler?";
   reportBtn.title = "Report this as a false positive";
   reportBtn.style.setProperty("pointer-events", "auto", "important");
 
@@ -183,7 +245,7 @@ function revealContainer(container) {
     event.preventDefault();
     event.stopPropagation();
     clearTimeout(autoRemoveTimer);
-    reportBtn.textContent = "✓ logged";
+    reportBtn.textContent = "logged";
     reportBtn.classList.add("reported");
     chrome.runtime.sendMessage({
       type: "REPORT_FALSE_POSITIVE",
@@ -197,15 +259,22 @@ function revealContainer(container) {
     setTimeout(() => reportBtn.remove(), 1200);
   });
 
-  // Inject inline at the end of the last text-bearing child so the button
-  // flows naturally after the last word without overlapping anything.
-  const lastTextChild = Array.from(container.childNodes)
-    .reverse()
-    .find((n) => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent.trim()));
-  if (lastTextChild && lastTextChild.nodeType === Node.ELEMENT_NODE) {
-    lastTextChild.appendChild(reportBtn);
-  } else {
+  // On X the article has its own internal flex/structure; appending the
+  // report button into a deeply-nested last child looks misplaced. Append
+  // to the article itself so it sits at the end of natural flow.
+  if (isXHost()) {
     container.appendChild(reportBtn);
+  } else {
+    // Inject inline at the end of the last text-bearing child so the button
+    // flows naturally after the last word without overlapping anything.
+    const lastTextChild = Array.from(container.childNodes)
+      .reverse()
+      .find((n) => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent.trim()));
+    if (lastTextChild && lastTextChild.nodeType === Node.ELEMENT_NODE) {
+      lastTextChild.appendChild(reportBtn);
+    } else {
+      container.appendChild(reportBtn);
+    }
   }
 }
 
@@ -213,46 +282,79 @@ function blurContainer(container, meta = {}) {
   if (container.classList.contains(BLUR_CLASS)) return;
   ensureContainerPosition(container);
 
-  // Wrap ALL child nodes (including bare text nodes) in a single div so
-  // the blur filter covers everything, not just element children.
-  // On Reddit, nested comment containers must stay outside the wrapper so
-  // each reply is evaluated and revealed independently.
-  const blurWrapper = document.createElement("div");
-  blurWrapper.className = "plot-armor-blur-wrapper";
+  const useDirectBlur = isXHost();
+  let blurWrapper = null;
 
-  const isReddit = location.hostname.toLowerCase().includes("reddit.com");
-  const childSnapshot = Array.from(container.childNodes);
-  const skippedChildren = [];
+  if (useDirectBlur) {
+    // X tweets are flex containers; wrapping their children collapses the
+    // flex line. A full-area veil (backdrop + tint) hides media reliably;
+    // filter on <article> often misses <video> / compositor quirks.
+    const veil = document.createElement("div");
+    veil.className = "plot-armor-x-veil";
+    container.appendChild(veil);
 
-  childSnapshot.forEach((node) => {
-    const isNestedComment =
-      isReddit &&
-      node.nodeType === Node.ELEMENT_NODE &&
-      node.matches &&
-      node.matches(REDDIT_COMMENT_SELECTOR);
-    if (isNestedComment) {
-      skippedChildren.push(node);
-    } else {
-      blurWrapper.appendChild(node);
-    }
-  });
+    const intercept = document.createElement("div");
+    intercept.className = "plot-armor-intercept";
+    intercept.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      revealContainer(container);
+    });
+    container.appendChild(intercept);
+  } else {
+    // Wrap ALL child nodes (including bare text nodes) in a single div so
+    // the blur filter covers everything, not just element children.
+    // On Reddit, nested comment containers must stay outside the wrapper so
+    // each reply is evaluated and revealed independently.
+    blurWrapper = document.createElement("div");
+    blurWrapper.className = "plot-armor-blur-wrapper";
 
-  blurWrapper.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    revealContainer(container);
-  });
+    const isReddit = location.hostname.toLowerCase().includes("reddit.com");
+    const childSnapshot = Array.from(container.childNodes);
+    const skippedChildren = [];
 
-  container.appendChild(blurWrapper);
-  // Re-attach nested comments after the wrapper so they remain independent.
-  skippedChildren.forEach((node) => container.appendChild(node));
+    childSnapshot.forEach((node) => {
+      const isNestedComment =
+        isReddit &&
+        node.nodeType === Node.ELEMENT_NODE &&
+        node.matches &&
+        node.matches(REDDIT_COMMENT_SELECTOR);
+      if (isNestedComment) {
+        skippedChildren.push(node);
+      } else {
+        blurWrapper.appendChild(node);
+      }
+    });
+
+    blurWrapper.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      revealContainer(container);
+    });
+
+    container.appendChild(blurWrapper);
+    // Re-attach nested comments after the wrapper so they remain independent.
+    skippedChildren.forEach((node) => container.appendChild(node));
+  }
 
   container.classList.add(BLUR_CLASS);
   container.setAttribute("data-plot-armor-blurred", "1");
 
   const overlay = document.createElement("div");
   overlay.className = OVERLAY_CLASS;
-  overlay.textContent = "🛡️ Hidden by Plot Armor — click to reveal";
+
+  const dot = document.createElement("span");
+  dot.className = "plot-armor-overlay-dot";
+
+  const textEl = document.createElement("span");
+  textEl.className = "plot-armor-overlay-text";
+  textEl.textContent = "hidden by plot armor";
+
+  const ctaEl = document.createElement("span");
+  ctaEl.className = "plot-armor-overlay-cta";
+  ctaEl.textContent = "click to reveal";
+
+  overlay.append(dot, textEl, ctaEl);
   overlay.style.setProperty("z-index", "2147483647", "important");
   overlay.style.setProperty("pointer-events", "auto", "important");
   // Store meta on the element so revealContainer can attach the report button after reveal.
@@ -268,38 +370,44 @@ function blurContainer(container, meta = {}) {
   });
   container.appendChild(overlay);
 
-  // Use Range.getClientRects() to find the actual visual bounding box of the
-  // text content. Unlike getBoundingClientRect() on a block element, this
-  // accounts for CSS floats that make the container wider than the text area.
-  requestAnimationFrame(() => {
-    const cRect = container.getBoundingClientRect();
-    let cx, cy;
+  if (useDirectBlur) {
+    // No wrapper to range-measure; the article itself is the visible box.
+    overlay.style.top = "50%";
+    overlay.style.left = "50%";
+  } else {
+    // Use Range.getClientRects() to find the actual visual bounding box of the
+    // text content. Unlike getBoundingClientRect() on a block element, this
+    // accounts for CSS floats that make the container wider than the text area.
+    requestAnimationFrame(() => {
+      const cRect = container.getBoundingClientRect();
+      let cx, cy;
 
-    try {
-      const range = document.createRange();
-      range.selectNodeContents(blurWrapper);
-      const lineRects = Array.from(range.getClientRects()).filter(
-        (r) => r.width > 2 && r.height > 2
-      );
-      if (lineRects.length > 0) {
-        const minLeft = Math.min(...lineRects.map((r) => r.left));
-        const maxRight = Math.max(...lineRects.map((r) => r.right));
-        const minTop = Math.min(...lineRects.map((r) => r.top));
-        const maxBottom = Math.max(...lineRects.map((r) => r.bottom));
-        cx = (minLeft + maxRight) / 2 - cRect.left;
-        cy = (minTop + maxBottom) / 2 - cRect.top;
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(blurWrapper);
+        const lineRects = Array.from(range.getClientRects()).filter(
+          (r) => r.width > 2 && r.height > 2
+        );
+        if (lineRects.length > 0) {
+          const minLeft = Math.min(...lineRects.map((r) => r.left));
+          const maxRight = Math.max(...lineRects.map((r) => r.right));
+          const minTop = Math.min(...lineRects.map((r) => r.top));
+          const maxBottom = Math.max(...lineRects.map((r) => r.bottom));
+          cx = (minLeft + maxRight) / 2 - cRect.left;
+          cy = (minTop + maxBottom) / 2 - cRect.top;
+        }
+      } catch (_) {}
+
+      if (cx == null || cy == null) {
+        const wRect = blurWrapper.getBoundingClientRect();
+        cx = wRect.left - cRect.left + wRect.width / 2;
+        cy = wRect.top - cRect.top + wRect.height / 2;
       }
-    } catch (_) {}
 
-    if (cx == null || cy == null) {
-      const wRect = blurWrapper.getBoundingClientRect();
-      cx = wRect.left - cRect.left + wRect.width / 2;
-      cy = wRect.top - cRect.top + wRect.height / 2;
-    }
-
-    overlay.style.top = `${cy}px`;
-    overlay.style.left = `${cx}px`;
-  });
+      overlay.style.top = `${cy}px`;
+      overlay.style.left = `${cx}px`;
+    });
+  }
 
   debugLog("Blur applied", {
     tag: container.tagName,

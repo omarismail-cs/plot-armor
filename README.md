@@ -17,8 +17,9 @@ This is an active in-progress build (not production-hardened yet).
 What works today:
 
 - Add and remove protected titles from the popup.
+- **TMDB-verified adds:** type to search, **pick a row from the suggestion list**, then **Add**. The Add button stays disabled until you select a result—no free-text gibberish or typo titles that never match TMDB. Each add carries **TMDB id + media type** into the background so context resolution matches the intended movie/show.
 - Toggle protection per title, plus pause all / enable all controls (stored in `activeProtectedShows`; the **background** spoiler check only considers titles that are not paused).
-- TMDB-backed title suggestions (with poster thumbnails) while adding shows.
+- TMDB search suggestions include **poster thumbnails** (`poster_path` from the API, loaded from `image.tmdb.org`; declared in `manifest.json` host permissions).
 - Story context generation per title using TMDB metadata + OpenAI (with Wikipedia summaries when available).
 - **Spoiler detection (`background.js`, detector `v14`):**
   - **Tier 1** — fast entity/story-graph matching. The scan uses **main text plus optional preceding context** together so pronoun-only lines still pick up names from the line before.
@@ -67,8 +68,8 @@ TMDB_READ_ACCESS_TOKEN=your_tmdb_read_token
 ## Usage
 
 1. Open the Plot Armor popup.
-2. Add one or more titles to protect.
-3. Browse content pages (for example Reddit or Wikipedia).
+2. Type a few letters to search TMDB, **click a suggestion** (title + poster), then click **Add**. Repeat for each show or movie you want protected.
+3. Browse content pages (for example Reddit, Wikipedia, or X).
 4. If a block is classified as likely spoiler content, it is blurred and can be revealed manually.
 
 ## Quick debug checklist
@@ -146,6 +147,7 @@ await runPlotArmorFixtures({ clearEvalCacheEachCase: true });
 
 ## Current known limits
 
+- **Non-TMDB blocking** (niche YouTube series, one-off events, manual keywords) is not in the popup yet. Everything in Protected Shows is tied to a TMDB pick.
 - Detection precision is still being tuned (false positives and misses both happen).
 - **Default LLM escalation (v14)** improves recall but increases **API cost and latency** versus a stricter local-only gate.
 - Results vary by page structure; Reddit and Wikipedia layouts are not fully uniform.

@@ -38,6 +38,22 @@ function posterUrlFromPath(path) {
   return `${TMDB_IMAGE_BASE}${normalized.startsWith("/") ? normalized : `/${normalized}`}`;
 }
 
+function hasValidTmdbSelection(sel) {
+  return Boolean(
+    sel &&
+      sel.id != null &&
+      sel.mediaType &&
+      typeof sel.title === "string" &&
+      sel.title.trim().length > 0
+  );
+}
+
+function syncAddButtonState() {
+  const canAdd = hasValidTmdbSelection(selectedSuggestion);
+  addBtn.disabled = !canAdd;
+  addBtn.setAttribute("aria-disabled", canAdd ? "false" : "true");
+}
+
 function fillPosterEl(container, url) {
   container.innerHTML = "";
   if (!url) {
@@ -281,14 +297,14 @@ function requestShowRemoval(show) {
 }
 
 async function addShow() {
-  const typed = inputEl.value.trim();
-  const show = selectedSuggestion?.title || typed;
-  const tmdbSel = selectedSuggestion;
+  if (!hasValidTmdbSelection(selectedSuggestion)) return;
 
-  if (!show) return;
+  const show = selectedSuggestion.title.trim();
+  const tmdbSel = selectedSuggestion;
 
   inputEl.value = "";
   selectedSuggestion = null;
+  syncAddButtonState();
   hideSuggestions();
 
   const shows = await getShows();
@@ -328,6 +344,7 @@ inputEl.addEventListener("keydown", (event) => {
 
 inputEl.addEventListener("input", () => {
   selectedSuggestion = null;
+  syncAddButtonState();
   const query = inputEl.value.trim();
   if (query.length < 2) {
     hideSuggestions();
@@ -377,6 +394,7 @@ function selectSuggestion(suggestion) {
   selectedSuggestion = suggestion;
   inputEl.value = suggestion.title;
   hideSuggestions();
+  syncAddButtonState();
 }
 
 function renderSuggestions(results) {
@@ -408,6 +426,8 @@ function renderSuggestions(results) {
       img.src = url;
       img.alt = "";
       img.loading = "lazy";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
       img.addEventListener("error", () => {
         thumbWrap.innerHTML = "";
         const fb = document.createElement("div");
@@ -489,4 +509,7 @@ enableAllBtn?.addEventListener("click", async () => {
   renderShows(shows);
 });
 
-Promise.all([loadSyncState(), loadThumbnails()]).then(([shows]) => renderShows(shows));
+Promise.all([loadSyncState(), loadThumbnails()]).then(([shows]) => {
+  renderShows(shows);
+  syncAddButtonState();
+});

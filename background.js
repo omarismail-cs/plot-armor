@@ -265,6 +265,7 @@ async function searchTmdbTitles(query) {
       mediaType: item.media_type,
       title: item.title || item.name || "",
       year: String(item.release_date || item.first_air_date || "").slice(0, 4),
+      posterPath: item.poster_path || "",
     }));
 }
 

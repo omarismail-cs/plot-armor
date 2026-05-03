@@ -198,6 +198,15 @@
         background: rgba(24, 24, 27, 0.8);
       }
 
+      .btn-add:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .btn-add:disabled:hover {
+        background: var(--secondary);
+      }
+
       .suggestions {
         position: absolute;
         top: calc(100% + 6px);
@@ -654,12 +663,12 @@
             <input
               id="showInput"
               type="text"
-              placeholder="Add show to protect..."
+              placeholder="Search TMDB, then pick a result…"
               autocomplete="off"
             />
             <ul id="suggestions" class="suggestions hidden"></ul>
           </div>
-          <button id="addBtn" type="button" class="btn-add">Add</button>
+          <button id="addBtn" type="button" class="btn-add" disabled aria-disabled="true">Add</button>
         </div>
       </section>
 
