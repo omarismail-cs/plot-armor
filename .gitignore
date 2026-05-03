@@ -15,6 +15,9 @@ dist/
 build/
 out/
 
+# v0 / design exports (reference only; UI lives in popup.html)
+v0-export/
+
 # OS and editor files
 .DS_Store
 Thumbs.db

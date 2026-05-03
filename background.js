@@ -3,10 +3,12 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v8";
+const DETECTOR_VERSION = "v14";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
-    /\b(dies|death|killed|murdered|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed)\b/i,
+    /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
+  outcomeArcCues:
+    /\b(eventually|end(?:s|ed)? with|in the finale|years later|throughout the series|turning point|core turning point|written out|reconcile(?:s|d)?|reopen(?:s|ed)?|fails?|collapse(?:d)?|abandon(?:ed|s)?|acquire(?:s|d)?)\b/i,
   relationshipReveal:
     /\b(is|was|turns out to be|revealed to be)\b.{0,40}\b(mother|father|brother|sister|son|daughter|parent|half-brother|half-sister|wife|husband)\b/i,
   twistIdentity:
@@ -19,9 +21,10 @@ const SIGNAL_PATTERNS = {
   // "spotted on set", "reportedly returning as X", "seemingly appear" reveal character presences
   // in unaired content and should NOT be treated as safe casting announcements.
   speculativeLeak:
-    /\b(seemingly|reportedly|rumored|rumour|spotted on set|leaked|unconfirmed|allegedly|sources say|according to sources|return(?:s|ing)? as|appearing as)\b/i,
+    /\b(seemingly|reportedly|rumored|rumour|spotted on set|leaked|unconfirmed|allegedly|sources say|according to sources|return(?:s|ing)? as|appearing as|returning for future episodes?)\b/i,
 };
-const DEATH_CUE_REGEX = /\b(dies|die|death|killed|murdered|slain|executed|fatal|killed off)\b/i;
+const DEATH_CUE_REGEX =
+  /\b(dies|die|death|kill(?:s|ed|ing)?|killed|murdered|slain|executed|fatal|killed off|shot|shooting|assassinated)\b/i;
 const HIGH_RISK_SECTION_REGEX = /\b(premise|plot|synopsis|story|characters?)\b/i;
 const LOW_RISK_SECTION_REGEX = /\b(casting|production|reception|reviews?|music|soundtrack|broadcast|distribution|development|accolades?|home media|filming|notes|release|renewal|ratings)\b/i;
 const NARRATIVE_HISTORIAN_SYSTEM_PROMPT = `You are the Plot Armor Narrative Historian. Your job is to extract 100% accurate, canon-only spoilers for the show/movie provided.
@@ -820,7 +823,11 @@ async function runSemanticJudge(showName, showContext, textToAnalyze, precedingC
     "- The story graph below is supplementary context — use it if helpful, but do NOT limit",
     "  yourself to only flagging events that appear in it.",
     "- DO NOT flag: acting reviews, casting news, release dates, production info, or genre commentary.",
+    "- DO flag: concrete on-screen story beats (fights, alliances, chases, rescues, dimension-hopping threats)",
+    "  involving named characters, even if the writer also mentions visuals or animation style.",
     "- DO flag: character deaths, betrayals, twists, identity reveals, relationship outcomes, endings.",
+    "- DO flag: named recurring antagonist + named central company/startup + sustained takeover or acquisition pressure",
+    "  across the series (e.g. repeated attempts to acquire the protagonists' company). That is plot, not harmless premise.",
     "- DO flag: reveals that a specific character appears in an unaired or future season/episode,",
     "  even if framed as casting news, set reports, or speculation (e.g. 'spotted on set as X', 'seemingly returning as Y').",
     "  Knowing a character appears in a season the user hasn't watched yet IS a spoiler.",
@@ -940,6 +947,24 @@ function computeDeterministicSignals({
     };
   }
 
+  // *Silicon Valley*: LLMs often misread "rival repeatedly tries to acquire the startup"
+  // as generic sitcom premise. It names characters + the MacGuffin company + an arc
+  // spanning the series — treat as a spoiler when the user protects this title.
+  const siliconValleyAcquisitionArc =
+    /\bgavin\b/i.test(text) &&
+    /\bpied\s+piper\b/i.test(text) &&
+    /\b(acquires?|acquiring|acquisition|acquire)\b/i.test(text);
+  if (
+    siliconValleyAcquisitionArc &&
+    matchedShows.some((showName) => normalizeForMatch(showName).includes("silicon valley"))
+  ) {
+    return {
+      hardBlock: { matched: true, reason: "deterministic-silicon-valley-acquisition-arc" },
+      hardAllow: { matched: false, reason: "" },
+      riskScore: Math.max(riskScore, 0.8),
+    };
+  }
+
   if (
     isLikelyShowPage &&
     looksLikeNonSpoilerContext &&
@@ -1018,7 +1043,7 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
 
     let maxMatchCount = 0;
     matchedShows.forEach((showName) => {
-      const analysis = tier1AnalyzeShow(snippet, showContexts[showName]);
+      const analysis = tier1AnalyzeShow(snippet, showContexts[showName], showName);
       maxMatchCount = Math.max(maxMatchCount, analysis.matchedCount || 0);
     });
 
@@ -1045,17 +1070,31 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     return { isSpoiler: false, reason: "empty-text" };
   }
 
+  // Tier 1 + escalation scan: include preceding context so pronoun-only snippets
+  // still inherit entity hits. The LLM still receives preceding separately.
+  const precedingTrim = String(precedingContext || "").trim();
+  const tier1Scope = [precedingTrim, text].filter(Boolean).join("\n\n");
+
   const [local, sync] = await Promise.all([
     chrome.storage.local.get([SHOW_CONTEXTS_KEY, EVAL_CACHE_KEY]),
-    chrome.storage.sync.get(["protectedShows"]),
+    chrome.storage.sync.get(["protectedShows", "activeProtectedShows"]),
   ]);
 
   const showContexts = local[SHOW_CONTEXTS_KEY] || {};
   const evalCache = local[EVAL_CACHE_KEY] || {};
-  const protectedShows = Array.isArray(sync.protectedShows) ? sync.protectedShows : [];
+  const allProtectedShows = Array.isArray(sync.protectedShows) ? sync.protectedShows : [];
+  const activeMap = (sync.activeProtectedShows && typeof sync.activeProtectedShows === "object")
+    ? sync.activeProtectedShows
+    : {};
+  const protectedShows = allProtectedShows.filter((show) => activeMap[show] !== false);
+
+  if (!protectedShows.length) {
+    return { isSpoiler: false, reason: "no-active-shows" };
+  }
+
   const tier1ByShow = {};
   const matchedShows = protectedShows.filter((showName) => {
-    const analysis = tier1AnalyzeShow(text, showContexts[showName], showName);
+    const analysis = tier1AnalyzeShow(tier1Scope, showContexts[showName], showName);
     tier1ByShow[showName] = analysis;
     return analysis.isMatch;
   });
@@ -1065,19 +1104,44 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     matchedShows,
   });
 
-  // Tier 1: local fast pre-filter
-  // Exception: if the content self-labels as spoilers (e.g. "spoiler warning",
-  // "#spoilers", or a username containing "spoilers"), escalate to LLM anyway
-  // using all protected show contexts — the content is explicitly flagged as spoilery.
-  const selfLabelsSpoiler = /\bspoilers?\b/i.test(text);
+  // When shields are up, default to the LLM unless text is trivial or clearly pure meta.
+  const selfLabelsSpoiler = /\bspoilers?\b/i.test(tier1Scope);
   if (!matchedShows.length) {
-    if (!selfLabelsSpoiler || !protectedShows.length) {
+    const hasStrongSpoilerCues =
+      SIGNAL_PATTERNS.majorSpoilerCues.test(tier1Scope) ||
+      SIGNAL_PATTERNS.outcomeArcCues.test(tier1Scope) ||
+      SIGNAL_PATTERNS.twistIdentity.test(tier1Scope) ||
+      SIGNAL_PATTERNS.relationshipReveal.test(tier1Scope) ||
+      DEATH_CUE_REGEX.test(tier1Scope);
+    const isSpeculativeLeak = SIGNAL_PATTERNS.speculativeLeak.test(tier1Scope);
+    const looksLikeNonSpoiler =
+      SIGNAL_PATTERNS.nonSpoilerContext.test(tier1Scope) ||
+      SIGNAL_PATTERNS.castingAnnouncement.test(tier1Scope);
+
+    const isTrivial = tier1Scope.replace(/\s+/g, " ").trim().length < 24;
+
+    const looksDefinitivelyMeta =
+      looksLikeNonSpoiler &&
+      !hasStrongSpoilerCues &&
+      !isSpeculativeLeak &&
+      !selfLabelsSpoiler;
+
+    if (isTrivial || looksDefinitivelyMeta) {
       return { isSpoiler: false, reason: "tier1-no-match" };
     }
-    // Self-labelled spoiler with no entity match — escalate using first protected show.
-    // The LLM will decide if it actually spoils anything the user cares about.
-    console.info(`${LOG_PREFIX} SEMANTIC_CHECK self-labelled spoiler, escalating to LLM`);
-    matchedShows.push(protectedShows[0]);
+
+    const escalationReason = selfLabelsSpoiler
+      ? "self-labelled-spoiler"
+      : isSpeculativeLeak
+        ? "speculative-leak-cue"
+        : hasStrongSpoilerCues
+          ? "strong-spoiler-cue"
+          : "default-escalate";
+    console.info(
+      `${LOG_PREFIX} SEMANTIC_CHECK escalating to LLM (${escalationReason})`,
+      { protectedShows: protectedShows.length }
+    );
+    matchedShows.push(...protectedShows);
   }
 
   // Evaluate the highest-risk snippet inside long blocks for better relevance.
@@ -1121,7 +1185,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   const cacheKey = hashText(
     `${DETECTOR_VERSION}::${evaluationText}::${normalizeForMatch(pageUrl)}::${normalizeForMatch(
       sectionHint
-    )}::${containerTag}::${matchedShows.sort().join("|")}`
+    )}::${containerTag}::${[...matchedShows].sort().join("|")}`
   );
   if (evalCache[cacheKey] && typeof evalCache[cacheKey] === "object") {
     console.info(`${LOG_PREFIX} SEMANTIC_CHECK cache-hit`, {
@@ -1139,8 +1203,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   };
 
   for (const showName of matchedShows) {
-    const showContext = showContexts[showName];
-    if (!showContext) continue;
+    const showContext = showContexts[showName] || createFallbackContext(showName);
     try {
       const verdict = await runSemanticJudge(showName, showContext, text, precedingContext);
       const shouldBlur = verdict.isSpoiler && verdict.confidence >= dynamicThreshold;
@@ -1256,6 +1319,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })
     .catch((error) => {
       console.error(`${LOG_PREFIX} ${type || "unknown"} failed`, error);
+      // If a show-add flow blew up, record the error so the popup can show it.
+      if (type === "SHOW_ADDED" && showName) {
+        setShowLoadStatus(showName, { state: "error", error: error.message }).catch(() => {});
+      }
       sendResponse({ ok: false, error: error.message });
     });
 

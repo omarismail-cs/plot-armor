@@ -17,16 +17,18 @@ This is an active in-progress build (not production-hardened yet).
 What works today:
 
 - Add and remove protected titles from the popup.
-- Toggle protection per title, plus pause all / enable all controls.
+- Toggle protection per title, plus pause all / enable all controls (stored in `activeProtectedShows`; the **background** spoiler check only considers titles that are not paused).
 - TMDB-backed title suggestions (with poster thumbnails) while adding shows.
 - Story context generation per title using TMDB metadata + OpenAI (with Wikipedia summaries when available).
-- Hybrid detection pipeline:
-  - Tier 1 deterministic/entity matching
-  - Tier 2 semantic OpenAI classification when needed
-- Blur + click-to-reveal behavior for likely spoiler content.
-- False-positive reporting signal (`Not a spoiler?`) capture for later tuning.
-- Multi-title semantic optimization: when one block matches multiple protected titles, the background service uses one combined LLM call instead of per-title sequential calls.
-- Better popup UX polish (loading states, active/standby header state, improved readability and scrollbar styling).
+- **Spoiler detection (`background.js`, detector `v14`):**
+  - **Tier 1** — fast entity/story-graph matching. The scan uses **main text plus optional preceding context** together so pronoun-only lines still pick up names from the line before.
+  - **Escalation** — if Tier 1 does not match any entity, the pipeline **defaults to calling the LLM** whenever you have active shields, **unless** the snippet is very short or reads as **pure** meta (casting / reviews / release / production / music) with no spoiler-shaped cues. This favors **recall** over trying to list every possible “spoiler word” in regex form.
+  - **Tier 2** — OpenAI JSON classifier using model knowledge; **missing story graphs** use an empty fallback so new titles still get judged.
+  - **Verdict cache** — `evalCache` in `chrome.storage.local`, keyed in part by detector version so rule changes don’t reuse stale results.
+  - When multiple titles are in play (e.g. after escalation), the service may run **one LLM call per title** until it gets a confident spoiler hit or exhausts the list — good accuracy, higher API use than a single batched call.
+- Blur + click-to-reveal on the page for blocks classified as spoilers.
+- False-positive reporting (`Not a spoiler?`) for tuning later.
+- Popup UX: loading states, active/standby header, typography and scrollbar polish.
 
 ## Tech stack
 
@@ -43,7 +45,10 @@ What works today:
 - `popup.html` / `popup.js` - popup UI and title management
 - `background.js` - context generation, spoiler engine, API calls, cache
 - `content.js` - page scanning, blur/reveal UI, observer orchestration
-- `.env` - local API credentials (not committed)
+- `tests/fixtures.json` - fixed spoiler/non-spoiler cases for regression checks
+- `tests/run-fixtures.js` - paste into the service worker console to run fixtures
+- `.env` - local API credentials (not committed; see `.gitignore`)
+- `docs/popup-preview.png` - README screenshot asset
 
 ## Setup
 
@@ -88,20 +93,72 @@ chrome.storage.local.set({ evalCache: {} });
 chrome.storage.local.set({ showContexts: {} });
 ```
 
+## Deterministic fixture testing (50 fixed cases)
+
+Use this when you want consistent regression checks instead of manually scrolling random pages.
+
+### Files
+
+- `tests/fixtures.json` - fixed input set (50 cases)
+- `tests/run-fixtures.js` - console runner script
+
+### Run steps (service worker console)
+
+1. Open `chrome://extensions`.
+2. Find Plot Armor and click **Inspect views: service worker**.
+3. Open `tests/run-fixtures.js` in your editor.
+4. Copy the whole file and paste it into the service worker console.
+5. Run:
+
+```js
+await runPlotArmorFixtures();
+```
+
+Optional:
+
+```js
+// Run only the first 10 cases
+await runPlotArmorFixtures({ limit: 10 });
+
+// Run specific fixture IDs
+await runPlotArmorFixtures({ ids: ["PA-001", "PA-045"] });
+
+// Force a cold semantic result per case (no reuse of evalCache between rows)
+await runPlotArmorFixtures({ clearEvalCacheEachCase: true });
+```
+
+**Service worker note:** if DevTools says `runPlotArmorFixtures is not defined`, the worker restarted — paste `run-fixtures.js` again (or save it as a **Snippet**). The script calls `handleSemanticCheck` directly when run inside the service worker so `chrome.runtime.sendMessage` is not required there.
+
+### Output
+
+- Summary line in console, e.g. `42/50 passed`.
+- Failure table with:
+  - `id`
+  - expected vs actual spoiler decision
+  - expected vs actual matched show (when applicable)
+  - model reason/confidence (if returned)
+
+### Notes
+
+- This suite hits the live semantic pipeline (`SEMANTIC_CHECK`), so it may consume OpenAI API calls. A full **50-case** run with `clearEvalCacheEachCase: true` can take on the order of **tens of seconds** — that is expected; real browsing still benefits from `evalCache` and only evaluating visible chunks.
+- The runner temporarily overrides `protectedShows` / `activeProtectedShows` per case and restores your previous sync values in a `finally` block. You do **not** need those titles pre-added in the popup for the harness to run.
+- Replace or extend `fixtures.json` if you want a different fixed batch of titles (keep `protectedShows` strings aligned with how you add titles in the UI).
+
 ## Current known limits
 
-- Detection precision is still being tuned (both false positives and misses occur).
+- Detection precision is still being tuned (false positives and misses both happen).
+- **Default LLM escalation (v14)** improves recall but increases **API cost and latency** versus a stricter local-only gate.
 - Results vary by page structure; Reddit and Wikipedia layouts are not fully uniform.
-- LLM latency can still be noticeable on some pages.
-- Context quality depends on upstream data quality and model consistency.
+- **Content script:** on storage changes, the current `resetAndReevaluate` path may **reveal all blurred blocks** before re-scanning — you can see a brief flash on some sites when the show list updates.
+- Context quality depends on upstream data and model behavior.
 
 ## Near-term priorities
 
-- Reduce latency further (smarter gating, lower round trips).
+- Cut LLM cost/latency where safe (e.g. batched multi-title judge, cheaper pre-filter) without losing v14-style recall.
 - Improve comment-level precision on Reddit.
-- Add a repeatable local fixture harness for spoiler/non-spoiler regression checks.
-- Strengthen deterministic handling for relationship/twist edge cases.
-- Add user progress awareness (block content beyond watched progress only).
+- Soften storage-reset blur flicker in `content.js` when the protected list changes.
+- Stronger handling of ambiguous “meta vs plot” lines without extra regex whack-a-mole.
+- Optional: user progress awareness (only block past where you’ve watched).
 
 ## Safety note
 

@@ -1,0 +1,331 @@
+[
+  {
+    "id": "PA-001",
+    "protectedShows": ["The Last of Us"],
+    "text": "Joel kills the Fireflies and takes Ellie out of the operating room before they can harvest her brain.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-002",
+    "protectedShows": ["The Last of Us"],
+    "text": "Tess is bitten and stays behind in the State House to detonate the explosives.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-003",
+    "protectedShows": ["The Last of Us"],
+    "text": "Sam turns and Henry shoots him before taking his own life.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-004",
+    "protectedShows": ["The Last of Us"],
+    "text": "Ellie is revealed to be immune after being bitten, which is why the Fireflies want to operate.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-005",
+    "protectedShows": ["The Last of Us"],
+    "text": "Bill and Frank's love story ends with both choosing to die together in their home.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-006",
+    "protectedShows": ["The Last of Us"],
+    "text": "Pedro Pascal discussed the physical toll of long shoots in interviews.",
+    "expectedSpoiler": false,
+    "sectionHint": "Casting"
+  },
+  {
+    "id": "PA-007",
+    "protectedShows": ["The Last of Us"],
+    "text": "HBO renewed the series after a strong premiere, locking in another season.",
+    "expectedSpoiler": false,
+    "sectionHint": "Release"
+  },
+  {
+    "id": "PA-008",
+    "protectedShows": ["The Last of Us"],
+    "text": "Critics praised the production design and how the show adapts the game's tone.",
+    "expectedSpoiler": false,
+    "sectionHint": "Reception"
+  },
+  {
+    "id": "PA-009",
+    "protectedShows": ["The Last of Us"],
+    "text": "Craig Mazin and Neil Druckmann shared writing duties for the adaptation.",
+    "expectedSpoiler": false,
+    "sectionHint": "Production"
+  },
+  {
+    "id": "PA-010",
+    "protectedShows": ["The Last of Us"],
+    "text": "Gustavo Santaolalla returned to compose, reusing themes from the original game.",
+    "expectedSpoiler": false,
+    "sectionHint": "Music"
+  },
+  {
+    "id": "PA-011",
+    "protectedShows": ["Game of Thrones"],
+    "text": "Ned Stark is executed at the Sept of Baelor on Joffrey's order.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-012",
+    "protectedShows": ["Game of Thrones"],
+    "text": "The Red Wedding ends with Robb, Catelyn, and Talisa being murdered by the Freys.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-013",
+    "protectedShows": ["Game of Thrones"],
+    "text": "Jon Snow is revealed to be the son of Lyanna Stark and Rhaegar Targaryen.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-014",
+    "protectedShows": ["Game of Thrones"],
+    "text": "Daenerys burns King's Landing on Drogon and is killed by Jon shortly after.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-015",
+    "protectedShows": ["Game of Thrones"],
+    "text": "Bran Stark is chosen as the new king of the Six Kingdoms in the finale.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-016",
+    "protectedShows": ["Game of Thrones"],
+    "text": "The series was filmed extensively in Northern Ireland, Croatia, and Iceland.",
+    "expectedSpoiler": false,
+    "sectionHint": "Production"
+  },
+  {
+    "id": "PA-017",
+    "protectedShows": ["Game of Thrones"],
+    "text": "Reviewers debated the pacing of the final season but praised the early seasons' writing.",
+    "expectedSpoiler": false,
+    "sectionHint": "Reception"
+  },
+  {
+    "id": "PA-018",
+    "protectedShows": ["Game of Thrones"],
+    "text": "HBO heavily marketed each season premiere with global press tours.",
+    "expectedSpoiler": false,
+    "sectionHint": "Release"
+  },
+  {
+    "id": "PA-019",
+    "protectedShows": ["Game of Thrones"],
+    "text": "Ramin Djawadi composed the score, including the iconic main theme.",
+    "expectedSpoiler": false,
+    "sectionHint": "Music"
+  },
+  {
+    "id": "PA-020",
+    "protectedShows": ["Game of Thrones"],
+    "text": "Peter Dinklage and Lena Headey discussed table reads in early press junkets.",
+    "expectedSpoiler": false,
+    "sectionHint": "Casting"
+  },
+  {
+    "id": "PA-021",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Oppenheimer leads the Trinity test in the desert, successfully detonating the first atomic bomb.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-022",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Lewis Strauss orchestrates the security clearance hearing as personal revenge against Oppenheimer.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-023",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Oppenheimer's affair with Jean Tatlock and her later death are key emotional beats.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-024",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Einstein's final exchange implies a chain reaction Oppenheimer fears has already begun.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-025",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Oppenheimer loses his clearance after the hearing while Strauss's confirmation publicly fails.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-026",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Christopher Nolan shot the film using IMAX cameras and practical effects where possible.",
+    "expectedSpoiler": false,
+    "sectionHint": "Production"
+  },
+  {
+    "id": "PA-027",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Cillian Murphy described the role as the most demanding of his career.",
+    "expectedSpoiler": false,
+    "sectionHint": "Casting"
+  },
+  {
+    "id": "PA-028",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Universal positioned the film as a mid-summer prestige release.",
+    "expectedSpoiler": false,
+    "sectionHint": "Release"
+  },
+  {
+    "id": "PA-029",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Critics widely praised the editing and Hoyte van Hoytema's cinematography.",
+    "expectedSpoiler": false,
+    "sectionHint": "Reception"
+  },
+  {
+    "id": "PA-030",
+    "protectedShows": ["Oppenheimer"],
+    "text": "Ludwig Goransson composed a score that leans heavily on strings and propulsive percussion.",
+    "expectedSpoiler": false,
+    "sectionHint": "Music"
+  },
+  {
+    "id": "PA-031",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Anxiety takes over the console and pushes Joy and the original emotions out of headquarters.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-032",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Riley's new sense of self collapses into a panic attack mid-hockey tryout before Joy intervenes.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-033",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Joy and the others escape the Vault and rebuild Riley's sense of self with a more honest belief system.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-034",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Anxiety eventually accepts she cannot define Riley alone and lets the other emotions back in.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-035",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Embarrassment, Envy, and Ennui join headquarters as Riley enters puberty.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-036",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Pixar marketed the sequel heavily on the introduction of new emotions in trailers.",
+    "expectedSpoiler": false,
+    "sectionHint": "Release"
+  },
+  {
+    "id": "PA-037",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Kelsey Mann directed the film as his feature debut at Pixar.",
+    "expectedSpoiler": false,
+    "sectionHint": "Production"
+  },
+  {
+    "id": "PA-038",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Reviewers praised the animation and how the new emotions were visually designed.",
+    "expectedSpoiler": false,
+    "sectionHint": "Reception"
+  },
+  {
+    "id": "PA-039",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Amy Poehler reprised her role as Joy after years away from the character.",
+    "expectedSpoiler": false,
+    "sectionHint": "Casting"
+  },
+  {
+    "id": "PA-040",
+    "protectedShows": ["Inside Out 2"],
+    "text": "Andrea Datzman composed the score, expanding on Michael Giacchino's original themes.",
+    "expectedSpoiler": false,
+    "sectionHint": "Music"
+  },
+  {
+    "id": "PA-041",
+    "protectedShows": ["The Last of Us", "Game of Thrones"],
+    "text": "Spoiler warning: one ends with a father killing to save his surrogate daughter, the other with a beloved king-in-the-making betrayed at a wedding.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-042",
+    "protectedShows": ["Oppenheimer", "Inside Out 2"],
+    "text": "Reviewers contrasted The Last of Us-era prestige drama with Pixar's animation craft, but specifically praised Oppenheimer and Inside Out 2 for technical ambition.",
+    "expectedSpoiler": false,
+    "sectionHint": "Reception"
+  },
+  {
+    "id": "PA-043",
+    "protectedShows": ["Game of Thrones", "Oppenheimer"],
+    "text": "Spoilers: one ends with the burning of a capital city by a dragon; the other with a scientist losing his clearance after a rigged hearing.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-044",
+    "protectedShows": ["The Last of Us", "Inside Out 2"],
+    "text": "Both releases earned strong opening reviews focused on craft, emotion, and audience engagement.",
+    "expectedSpoiler": false,
+    "sectionHint": "Reception"
+  },
+  {
+    "id": "PA-045",
+    "protectedShows": ["The Last of Us", "Game of Thrones"],
+    "text": "Casting update: multiple actors are reportedly returning for future seasons across both franchises.",
+    "expectedSpoiler": true,
+    "sectionHint": "Casting"
+  },
+  {
+    "id": "PA-046",
+    "protectedShows": ["The Last of Us"],
+    "text": "He kills the surgeons and carries her out before they can operate.",
+    "precedingContext": "Joel learns the Fireflies plan to kill Ellie to extract a cure.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-047",
+    "protectedShows": ["Game of Thrones"],
+    "text": "She burns the city even after the bells of surrender ring out.",
+    "precedingContext": "Daenerys arrives over King's Landing on Drogon as Cersei holds the throne.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-048",
+    "protectedShows": ["Oppenheimer"],
+    "text": "He loses his clearance once the rigged hearing reaches its verdict.",
+    "precedingContext": "Strauss has spent years setting up the security board against Oppenheimer.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-049",
+    "protectedShows": ["Inside Out 2"],
+    "text": "She said voicing the character again felt natural after stepping away for years.",
+    "precedingContext": "Amy Poehler discussed returning to the recording booth in interviews.",
+    "expectedSpoiler": false,
+    "sectionHint": "Casting"
+  },
+  {
+    "id": "PA-050",
+    "protectedShows": ["The Last of Us", "Game of Thrones", "Oppenheimer"],
+    "text": "Production teams shared release windows and soundtrack details for upcoming episodes and tie-in media.",
+    "expectedSpoiler": false,
+    "sectionHint": "Production"
+  }
+]
