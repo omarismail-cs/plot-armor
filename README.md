@@ -6,9 +6,13 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
 
 ## UI preview
 
-Current popup UI:
+**Popup** — protected list, per-title toggles, and TMDB search (Add stays disabled until you pick a suggestion):
 
 ![Plot Armor popup UI](./docs/popup-preview.png)
+
+**TMDB suggestions** — live search with posters and type/year labels; select a row, then **Add**:
+
+![Plot Armor TMDB search dropdown](./docs/popup-tmdb-dropdown.png)
 
 ## Current status
 
@@ -49,7 +53,7 @@ What works today:
 - `tests/fixtures.json` - fixed spoiler/non-spoiler cases for regression checks
 - `tests/run-fixtures.js` - paste into the service worker console to run fixtures
 - `.env` - local API credentials (not committed; see `.gitignore`)
-- `docs/popup-preview.png` - README screenshot asset
+- `docs/popup-preview.png` / `docs/popup-tmdb-dropdown.png` - README UI screenshots
 
 ## Setup
 
