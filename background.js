@@ -3,7 +3,7 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v14";
+const DETECTOR_VERSION = "v14.1";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -13,8 +13,10 @@ const SIGNAL_PATTERNS = {
     /\b(is|was|turns out to be|revealed to be)\b.{0,40}\b(mother|father|brother|sister|son|daughter|parent|half-brother|half-sister|wife|husband)\b/i,
   twistIdentity:
     /\b(real identity|true identity|is actually|was actually|double life|secretly)\b/i,
+  // Note: "costume" intentionally omitted — phrases like "in the Daredevil costume"
+  // are plot-shaped (TC#1) and must not bypass escalation via this channel.
   nonSpoilerContext:
-    /\b(cast|casting|production|development|filming|designer|costume|ratings|rotten tomatoes|metacritic|review|critical consensus|release|soundtrack|music|announced|joined the cast|portray|portrayed|reception|netflix|disney|hulu|amazon|apple tv|streaming|license|licens(?:ing|ed)|rights|renewed|showrunner|executive producer|distribution|distributor|broadcast|premiere|parental controls|home media|blu.ray|dvd|box set|season order|episode count|budget|filming location|spin.?off|crossover|cameo)\b/i,
+    /\b(cast|casting|production|development|filming|designer|ratings|rotten tomatoes|metacritic|review|critical consensus|release|soundtrack|music|announced|joined the cast|portray|portrayed|reception|netflix|disney|hulu|amazon|apple tv|streaming|license|licens(?:ing|ed)|rights|renewed|showrunner|executive producer|distribution|distributor|broadcast|premiere|parental controls|home media|blu.ray|dvd|box set|season order|episode count|budget|filming location|spin.?off|crossover|cameo)\b/i,
   castingAnnouncement:
     /\b(announced that|was cast as|joined the cast|renewed for|return(?:s|ed) for|guest appearance|showrunner|executive producer|prior commitments|writers? for|fbi agent|season one returners|in june|in july|in september|in november)\b/i,
   // Speculative/leak language — cancels casting/production hard-allows and forces LLM evaluation.

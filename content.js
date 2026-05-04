@@ -19,6 +19,33 @@ let processVisibleDebounce = null;
 const observedContainers = new WeakSet();
 const visibleContainers = new Set();
 const queuedContainers = new WeakSet();
+
+/** X virtualizes timeline cells; we must unobserve removed nodes or IO holds strong refs and scroll/load stalls. */
+function cleanupObservedContainer(container) {
+  if (!(container instanceof Element)) return;
+  if (!observedContainers.has(container)) return;
+  if (container.classList.contains(BLUR_CLASS)) {
+    revealContainer(container, { skipReport: true });
+  }
+  intersectionObserver.unobserve(container);
+  observedContainers.delete(container);
+  visibleContainers.delete(container);
+  queuedContainers.delete(container);
+  for (let i = pendingEvaluationQueue.length - 1; i >= 0; i -= 1) {
+    if (pendingEvaluationQueue[i] === container) pendingEvaluationQueue.splice(i, 1);
+  }
+  container.removeAttribute(PROCESSED_ATTR);
+  container.removeAttribute(VISIBLE_ATTR);
+}
+
+function cleanupRemovedSubtree(root) {
+  if (!(root instanceof Element)) return;
+  const sel = getCandidateSelector();
+  const toClean = [];
+  if (typeof root.matches === "function" && root.matches(sel)) toClean.push(root);
+  root.querySelectorAll(sel).forEach((el) => toClean.push(el));
+  toClean.forEach((el) => cleanupObservedContainer(el));
+}
 const pendingEvaluationQueue = [];
 let activeEvaluations = 0;
 
@@ -148,7 +175,9 @@ function injectStyles() {
     }
 
     .plot-armor-report-btn {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       margin-left: 8px;
       padding: 3px 10px;
       font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -169,7 +198,14 @@ function injectStyles() {
       user-select: none;
       vertical-align: middle;
       line-height: 1.6;
-      transition: color 0.15s, background 0.15s, border-color 0.15s;
+      transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, padding 0.15s ease, max-width 0.2s ease;
+    }
+
+    .plot-armor-report-btn svg {
+      width: 12px;
+      height: 12px;
+      display: block;
+      flex-shrink: 0;
     }
 
     .plot-armor-report-btn:hover {
@@ -183,6 +219,45 @@ function injectStyles() {
       border-color: rgba(34, 197, 94, 0.4);
       background: rgba(14, 30, 20, 0.85);
       pointer-events: none;
+    }
+
+    /* Compact host-mode (X): icon-only, top-right of the article;
+       expands to icon + "not a spoiler?" on hover so it stops competing
+       with tweet content while staying discoverable. */
+    .plot-armor-report-btn--host {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      margin-left: 0;
+      padding: 4px;
+      gap: 0;
+      max-width: 24px;
+      overflow: hidden;
+      background: rgba(9, 9, 11, 0.55);
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+
+    .plot-armor-report-btn--host .plot-armor-report-btn-text {
+      max-width: 0;
+      opacity: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      transition: max-width 0.18s ease, opacity 0.12s ease, margin-left 0.18s ease;
+      margin-left: 0;
+    }
+
+    .plot-armor-report-btn--host:hover,
+    .plot-armor-report-btn--host:focus-visible {
+      padding: 4px 10px 4px 6px;
+      gap: 6px;
+      max-width: 200px;
+    }
+
+    .plot-armor-report-btn--host:hover .plot-armor-report-btn-text,
+    .plot-armor-report-btn--host:focus-visible .plot-armor-report-btn-text {
+      max-width: 160px;
+      opacity: 1;
+      margin-left: 4px;
     }
   `;
   document.head.appendChild(style);
@@ -200,7 +275,65 @@ function isXHost() {
   return host.includes("twitter.com") || host.includes("x.com");
 }
 
-function revealContainer(container) {
+function attachAtomicReveal(node, container) {
+  // Capture-phase + stopImmediatePropagation so first click reaches us before
+  // the host site's own click interceptors (Reddit shreddit, X article navigation)
+  // can swallow or re-render the event mid-flight (TC#15).
+  const handler = (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.stopPropagation();
+    revealContainer(container);
+  };
+  node.addEventListener("click", handler, { capture: true });
+}
+
+function buildShieldIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z");
+  svg.appendChild(path);
+  return svg;
+}
+
+function domDepth(node) {
+  let d = 0;
+  let n = node;
+  while (n) {
+    d += 1;
+    n = n.parentElement;
+  }
+  return d;
+}
+
+/**
+ * Remove Plot Armor blur UI from `container`.
+ * @param {{ skipReport?: boolean }} options — inner peels pass skipReport so only
+ *   the outermost reveal adds "not a spoiler?" (avoids duplicate buttons / clicks).
+ */
+function revealContainer(container, options = {}) {
+  const skipReport = options.skipReport === true;
+
+  // Reddit (and other hosts) can stack two+ blurred nodes inside one card.
+  // Peel deepest descendants first, then this node — one gesture clears the stack.
+  if (container instanceof Element) {
+    let nested = Array.from(container.querySelectorAll(`:scope .${BLUR_CLASS}`)).filter((el) => el !== container);
+    while (nested.length) {
+      nested.sort((a, b) => domDepth(b) - domDepth(a));
+      const deepest = nested[0];
+      revealContainer(deepest, { skipReport: true });
+      nested = Array.from(container.querySelectorAll(`:scope .${BLUR_CLASS}`)).filter((el) => el !== container);
+    }
+  }
+
   // Read meta before clearing attributes.
   const show = container.dataset.paShow || "";
   const reason = container.dataset.paReason || "";
@@ -232,37 +365,58 @@ function revealContainer(container) {
     wrapper.remove();
   }
 
+  if (skipReport) {
+    return;
+  }
+
+  container.querySelectorAll(".plot-armor-report-btn").forEach((btn) => btn.remove());
+
   // Show the report button AFTER reveal so the user can read the content first.
+  const onX = isXHost();
   const reportBtn = document.createElement("button");
-  reportBtn.className = "plot-armor-report-btn";
-  reportBtn.textContent = "not a spoiler?";
+  reportBtn.className = onX ? "plot-armor-report-btn plot-armor-report-btn--host" : "plot-armor-report-btn";
   reportBtn.title = "Report this as a false positive";
+  reportBtn.setAttribute("aria-label", "Report not a spoiler");
   reportBtn.style.setProperty("pointer-events", "auto", "important");
+
+  reportBtn.appendChild(buildShieldIcon());
+  const reportText = document.createElement("span");
+  reportText.className = "plot-armor-report-btn-text";
+  reportText.textContent = "not a spoiler?";
+  reportBtn.appendChild(reportText);
 
   let autoRemoveTimer = setTimeout(() => reportBtn.remove(), 10000);
 
-  reportBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    clearTimeout(autoRemoveTimer);
-    reportBtn.textContent = "logged";
-    reportBtn.classList.add("reported");
-    chrome.runtime.sendMessage({
-      type: "REPORT_FALSE_POSITIVE",
-      text: extractContainerText(container).slice(0, 500),
-      show,
-      reason,
-      confidence: confidence !== "" ? Number(confidence) : null,
-      source,
-      url: location.href,
-    }).catch(() => {});
-    setTimeout(() => reportBtn.remove(), 1200);
-  });
+  reportBtn.addEventListener(
+    "click",
+    (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      clearTimeout(autoRemoveTimer);
+      reportText.textContent = "logged";
+      reportBtn.classList.add("reported");
+      chrome.runtime.sendMessage({
+        type: "REPORT_FALSE_POSITIVE",
+        text: extractContainerText(container).slice(0, 500),
+        show,
+        reason,
+        confidence: confidence !== "" ? Number(confidence) : null,
+        source,
+        url: location.href,
+      }).catch(() => {});
+      setTimeout(() => reportBtn.remove(), 1200);
+    },
+    { capture: true }
+  );
 
-  // On X the article has its own internal flex/structure; appending the
-  // report button into a deeply-nested last child looks misplaced. Append
-  // to the article itself so it sits at the end of natural flow.
-  if (isXHost()) {
+  if (onX) {
+    // Anchor in the top-right corner of the article. Container already has
+    // `position: relative` set by ensureContainerPosition while blurred, but
+    // revealContainer cleared inline `position`, so reapply briefly.
+    if (getComputedStyle(container).position === "static") {
+      container.style.position = "relative";
+    }
     container.appendChild(reportBtn);
   } else {
     // Inject inline at the end of the last text-bearing child so the button
@@ -295,11 +449,7 @@ function blurContainer(container, meta = {}) {
 
     const intercept = document.createElement("div");
     intercept.className = "plot-armor-intercept";
-    intercept.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      revealContainer(container);
-    });
+    attachAtomicReveal(intercept, container);
     container.appendChild(intercept);
   } else {
     // Wrap ALL child nodes (including bare text nodes) in a single div so
@@ -326,11 +476,7 @@ function blurContainer(container, meta = {}) {
       }
     });
 
-    blurWrapper.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      revealContainer(container);
-    });
+    attachAtomicReveal(blurWrapper, container);
 
     container.appendChild(blurWrapper);
     // Re-attach nested comments after the wrapper so they remain independent.
@@ -363,51 +509,14 @@ function blurContainer(container, meta = {}) {
   container.dataset.paConfidence = meta.confidence ?? "";
   container.dataset.paSource = meta.source || "";
 
-  overlay.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    revealContainer(container);
-  });
+  attachAtomicReveal(overlay, container);
   container.appendChild(overlay);
 
-  if (useDirectBlur) {
-    // No wrapper to range-measure; the article itself is the visible box.
-    overlay.style.top = "50%";
-    overlay.style.left = "50%";
-  } else {
-    // Use Range.getClientRects() to find the actual visual bounding box of the
-    // text content. Unlike getBoundingClientRect() on a block element, this
-    // accounts for CSS floats that make the container wider than the text area.
-    requestAnimationFrame(() => {
-      const cRect = container.getBoundingClientRect();
-      let cx, cy;
-
-      try {
-        const range = document.createRange();
-        range.selectNodeContents(blurWrapper);
-        const lineRects = Array.from(range.getClientRects()).filter(
-          (r) => r.width > 2 && r.height > 2
-        );
-        if (lineRects.length > 0) {
-          const minLeft = Math.min(...lineRects.map((r) => r.left));
-          const maxRight = Math.max(...lineRects.map((r) => r.right));
-          const minTop = Math.min(...lineRects.map((r) => r.top));
-          const maxBottom = Math.max(...lineRects.map((r) => r.bottom));
-          cx = (minLeft + maxRight) / 2 - cRect.left;
-          cy = (minTop + maxBottom) / 2 - cRect.top;
-        }
-      } catch (_) {}
-
-      if (cx == null || cy == null) {
-        const wRect = blurWrapper.getBoundingClientRect();
-        cx = wRect.left - cRect.left + wRect.width / 2;
-        cy = wRect.top - cRect.top + wRect.height / 2;
-      }
-
-      overlay.style.top = `${cy}px`;
-      overlay.style.left = `${cx}px`;
-    });
-  }
+  // Always center within the (already-relative) container. Range-rect math
+  // was unstable across Reddit gallery / shreddit / legacy DOM (TC#14); a
+  // simple top:50%; left:50% with translate(-50%,-50%) anchors reliably.
+  overlay.style.top = "50%";
+  overlay.style.left = "50%";
 
   debugLog("Blur applied", {
     tag: container.tagName,
@@ -425,10 +534,46 @@ function blurContainer(container, meta = {}) {
     .catch(() => {});
 }
 
+/** X/Twitter: pull "From …" / repost context lines that often sit outside the main tweet copy (TC#2). */
+function extractXAttributionText(article) {
+  const seen = new Set();
+  const out = [];
+  const push = (raw) => {
+    const t = String(raw || "").replace(/\s+/g, " ").trim();
+    if (t.length < 6 || t.length > 200 || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+
+  article.querySelectorAll('[data-testid="socialContext"]').forEach((n) => push(n.textContent));
+
+  const video = article.querySelector('[data-testid="videoComponent"]');
+  if (video) {
+    video.querySelectorAll('span[dir="auto"], div[dir="auto"]').forEach((el) => {
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (/^from\s+/i.test(t)) push(t);
+    });
+    const parent = video.parentElement;
+    if (parent && parent !== article) {
+      parent.querySelectorAll('span[dir="auto"], div[dir="auto"]').forEach((el) => {
+        const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (/^from\s+/i.test(t)) push(t);
+      });
+    }
+  }
+
+  return out.join(" ");
+}
+
 function extractContainerText(container) {
   const host = location.hostname.toLowerCase();
   if (!host.includes("reddit.com")) {
-    return (container.innerText || "").replace(/\s+/g, " ").trim();
+    let text = (container.innerText || "").replace(/\s+/g, " ").trim();
+    if (isXHost()) {
+      const extra = extractXAttributionText(container);
+      if (extra) text = `${text} ${extra}`.replace(/\s+/g, " ").trim();
+    }
+    return text;
   }
 
   const clone = container.cloneNode(true);
@@ -628,6 +773,15 @@ function observeContainer(container) {
   intersectionObserver.observe(container);
 }
 
+function isRedditCommentContainer(container) {
+  if (!(container instanceof Element)) return false;
+  return (
+    container.matches(REDDIT_COMMENT_SELECTOR) ||
+    String(container.getAttribute("thingid") || "").startsWith("t1_") ||
+    String(container.id || "").startsWith("comment-thing-")
+  );
+}
+
 function shouldSkipContainer(container) {
   if (!(container instanceof Element)) return true;
   if (container.closest(FALLBACK_EXCLUDE_SELECTOR)) return true;
@@ -646,6 +800,27 @@ function shouldSkipContainer(container) {
   }
 
   if (location.hostname.toLowerCase().includes("reddit.com")) {
+    // Avoid double-blur / double-reveal: shreddit wraps a card in <shreddit-post>
+    // (or legacy article[data-testid=post-container]) and also exposes inner
+    // <article> / div[data-click-id=body] that match the same candidate list.
+    // We only want the outer post root observed; inner shells share the same text.
+    const shredditPost = container.closest("shreddit-post");
+    if (shredditPost && container !== shredditPost && !isRedditCommentContainer(container)) {
+      if (
+        container.matches("article") ||
+        container.matches('article[data-testid="post-container"]') ||
+        container.matches('div[data-click-id="body"]')
+      ) {
+        return true;
+      }
+    }
+    const legacyPost = container.closest('article[data-testid="post-container"]');
+    if (legacyPost && container !== legacyPost && !isRedditCommentContainer(container)) {
+      if (container.matches("article") || container.matches('div[data-click-id="body"]')) {
+        return true;
+      }
+    }
+
     const ownText = extractContainerText(container);
     if (!ownText || ownText.length < 5) return true;
   }
@@ -696,6 +871,11 @@ function shutdownObservers() {
 const mutationObserver = new MutationObserver((mutations) => {
   if (observersStopped) return;
   mutations.forEach((mutation) => {
+    mutation.removedNodes.forEach((node) => {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        cleanupRemovedSubtree(node);
+      }
+    });
     mutation.addedNodes.forEach((node) => {
       if (node.nodeType === Node.ELEMENT_NODE) {
         discoverContainers(node);
@@ -724,7 +904,63 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   resetAndReevaluate();
 });
 
+// SPA URL change rescan (TC#3). X / Reddit navigate without a full reload
+// (clicking a tweet, hitting back, switching Search tabs). Patch history methods
+// + listen popstate, then rediscover containers and process visible ones.
+function setupSpaNavigationListener() {
+  let lastHref = location.href;
+  const onUrlChange = () => {
+    if (observersStopped) return;
+    if (location.href === lastHref) return;
+    lastHref = location.href;
+    debugLog("SPA navigation detected, rediscovering", { href: lastHref });
+    // New view -> let the host paint its tree, then rediscover.
+    setTimeout(() => {
+      if (observersStopped) return;
+      discoverContainers(document);
+      debounceProcessVisible();
+    }, 50);
+  };
+
+  const wrap = (method) => {
+    const orig = history[method];
+    if (typeof orig !== "function" || orig.__plotArmorWrapped) return;
+    const wrapped = function (...args) {
+      const result = orig.apply(this, args);
+      try { onUrlChange(); } catch (_) {}
+      return result;
+    };
+    wrapped.__plotArmorWrapped = true;
+    history[method] = wrapped;
+  };
+  wrap("pushState");
+  wrap("replaceState");
+  window.addEventListener("popstate", onUrlChange);
+  window.addEventListener("hashchange", onUrlChange);
+}
+
+// X often virtualizes the search column; scroll can mount new `article` nodes without
+// a mutation that bubbles the way we expect. Debounced rescan keeps the queue warm (TC#4).
+function setupXScrollRediscover() {
+  if (!isXHost()) return;
+  let scrollTimer = null;
+  window.addEventListener(
+    "scroll",
+    () => {
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        if (observersStopped) return;
+        discoverContainers(document);
+        debounceProcessVisible();
+      }, 350);
+    },
+    { passive: true, capture: true }
+  );
+}
+
 injectStyles();
 discoverContainers(document);
 mutationObserver.observe(document.body, { childList: true, subtree: true });
+setupSpaNavigationListener();
+setupXScrollRediscover();
 debugLog("Semantic scanner initialized");

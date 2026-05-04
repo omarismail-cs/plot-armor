@@ -36,7 +36,7 @@ What works today:
 - Toggle protection per title, plus pause all / enable all controls (stored in `activeProtectedShows`; the **background** spoiler check only considers titles that are not paused).
 - TMDB search suggestions include **poster thumbnails** (`poster_path` from the API, loaded from `image.tmdb.org`; declared in `manifest.json` host permissions).
 - Story context generation per title using TMDB metadata + OpenAI (with Wikipedia summaries when available).
-- **Spoiler detection (`background.js`, detector `v14`):**
+- **Spoiler detection (`background.js`, detector `v14.1`):**
   - **Tier 1** — fast entity/story-graph matching. The scan uses **main text plus optional preceding context** together so pronoun-only lines still pick up names from the line before.
   - **Escalation** — if Tier 1 does not match any entity, the pipeline **defaults to calling the LLM** whenever you have active shields, **unless** the snippet is very short or reads as **pure** meta (casting / reviews / release / production / music) with no spoiler-shaped cues. This favors **recall** over trying to list every possible “spoiler word” in regex form.
   - **Tier 2** — OpenAI JSON classifier using model knowledge; **missing story graphs** use an empty fallback so new titles still get judged.
@@ -164,14 +164,14 @@ await runPlotArmorFixtures({ clearEvalCacheEachCase: true });
 
 - **Non-TMDB blocking** (niche YouTube series, one-off events, manual keywords) is not in the popup yet. Everything in Protected Shows is tied to a TMDB pick.
 - Detection precision is still being tuned (false positives and misses both happen).
-- **Default LLM escalation (v14)** improves recall but increases **API cost and latency** versus a stricter local-only gate.
+- **Default LLM escalation** improves recall but increases **API cost and latency** versus a stricter local-only gate.
 - Results vary by page structure; Reddit and Wikipedia layouts are not fully uniform.
 - **Content script:** on storage changes, the current `resetAndReevaluate` path may **reveal all blurred blocks** before re-scanning — you can see a brief flash on some sites when the show list updates.
 - Context quality depends on upstream data and model behavior.
 
 ## Near-term priorities
 
-- Cut LLM cost/latency where safe (e.g. batched multi-title judge, cheaper pre-filter) without losing v14-style recall.
+- Cut LLM cost/latency where safe (e.g. batched multi-title judge, cheaper pre-filter) without losing recall-heavy behavior.
 - Improve comment-level precision on Reddit.
 - Soften storage-reset blur flicker in `content.js` when the protected list changes.
 - Stronger handling of ambiguous “meta vs plot” lines without extra regex whack-a-mole.
