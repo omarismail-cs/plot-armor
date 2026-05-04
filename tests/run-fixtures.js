@@ -10,6 +10,10 @@
  * Optional:
  *   await runPlotArmorFixtures({ limit: 10 });
  *   await runPlotArmorFixtures({ ids: ["PA-001", "PA-045"] });
+ *   await runPlotArmorFixtures({ clearEvalCacheEachCase: true });
+ *
+ * Note: harness uses containerTag FIXTURE so the service worker always escalates to
+ * the LLM when Tier 1 has no stored graph — re-paste this file after bumping DETECTOR_VERSION.
  */
 async function runPlotArmorFixtures(options = {}) {
   const { limit = null, ids = null, clearEvalCacheEachCase = false } = options;

@@ -4,16 +4,44 @@ const BLUR_CLASS = "plot-armor-blurred";
 const OVERLAY_CLASS = "plot-armor-overlay";
 const PROCESSED_ATTR = "data-plot-armor-processed";
 const VISIBLE_ATTR = "data-plot-armor-visible";
+const USER_REVEALED_ATTR = "data-plot-armor-user-revealed";
 const DEBUG = true;
 const MIN_TEXT_LENGTH = 40;
 const MAX_ANALYZE_CHARS = 900;
 const DEBOUNCE_MS = 100;
 const EVAL_CONCURRENCY_LIMIT = 5;
+const PREFETCH_MARGIN_PX = 1400;
 const FALLBACK_SELECTOR = "[id='mw-content-text'] .mw-parser-output > p, [id='mw-content-text'] .mw-parser-output td.summary, [id='mw-content-text'] .mw-parser-output td.description";
 const FALLBACK_EXCLUDE_SELECTOR =
   "nav, .toc, .toclevel-1, .toclevel-2, .toclevel-3, .infobox, .references, .metadata, header, footer, aside";
 const REDDIT_COMMENT_SELECTOR =
   "shreddit-comment, [data-testid='comment'], [data-test-id='comment'], article[thingid^='t1_'], div[id^='comment-thing-']";
+
+let missingExtensionRuntimeLogged = false;
+
+/** MV3 content scripts normally have chrome.runtime; it can be missing after disable/reload races or in odd frames. */
+function getExtensionRuntime() {
+  try {
+    if (typeof chrome !== "undefined" && chrome?.runtime?.sendMessage) return chrome.runtime;
+    if (typeof browser !== "undefined" && browser?.runtime?.sendMessage) return browser.runtime;
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+async function sendExtensionMessage(message) {
+  const rt = getExtensionRuntime();
+  if (!rt) {
+    if (!missingExtensionRuntimeLogged) {
+      missingExtensionRuntimeLogged = true;
+      debugLog("Extension messaging unavailable (runtime missing); stopping observers for this tab.");
+      shutdownObservers();
+    }
+    return null;
+  }
+  return rt.sendMessage(message);
+}
 
 let processVisibleDebounce = null;
 const observedContainers = new WeakSet();
@@ -36,6 +64,7 @@ function cleanupObservedContainer(container) {
   }
   container.removeAttribute(PROCESSED_ATTR);
   container.removeAttribute(VISIBLE_ATTR);
+  container.removeAttribute(USER_REVEALED_ATTR);
 }
 
 function cleanupRemovedSubtree(root) {
@@ -80,6 +109,9 @@ function getCandidateSelector() {
 
 function injectStyles() {
   if (document.getElementById("plot-armor-semantic-style")) return;
+
+  const parent = document.head || document.documentElement;
+  if (!parent) return;
 
   const style = document.createElement("style");
   style.id = "plot-armor-semantic-style";
@@ -227,7 +259,8 @@ function injectStyles() {
     .plot-armor-report-btn--host {
       position: absolute;
       top: 8px;
-      right: 8px;
+      /* Overridden in JS from Grok button position when possible. */
+      right: 88px;
       margin-left: 0;
       padding: 4px;
       gap: 0;
@@ -260,7 +293,7 @@ function injectStyles() {
       margin-left: 4px;
     }
   `;
-  document.head.appendChild(style);
+  parent.appendChild(style);
 }
 
 function ensureContainerPosition(container) {
@@ -275,6 +308,44 @@ function isXHost() {
   return host.includes("twitter.com") || host.includes("x.com");
 }
 
+/** Place host report chip just left of X's Grok control (avoids overlap with Grok + overflow). */
+function schedulePositionXReportButton(container, reportBtn) {
+  const gapPx = 10;
+  const fallbackRightPx = 88;
+  const run = () => {
+    if (!reportBtn.isConnected || !container.isConnected) return;
+    const grok = container.querySelector('button[aria-label="Grok actions"]');
+    const cRect = container.getBoundingClientRect();
+    if (!grok || !Number.isFinite(cRect.right)) {
+      reportBtn.style.right = `${fallbackRightPx}px`;
+      return;
+    }
+    const gRect = grok.getBoundingClientRect();
+    if (!Number.isFinite(gRect.left) || gRect.width < 2) {
+      reportBtn.style.right = `${fallbackRightPx}px`;
+      return;
+    }
+    const inset = Math.round(cRect.right - gRect.left + gapPx);
+    const minInset = 8;
+    const maxInset = Math.max(minInset, Math.round(cRect.width) - 12);
+    reportBtn.style.right = `${Math.min(maxInset, Math.max(minInset, inset))}px`;
+  };
+  requestAnimationFrame(() => {
+    run();
+    requestAnimationFrame(run);
+  });
+}
+
+function markPlotArmorUserRevealed(container) {
+  if (!(container instanceof Element)) return;
+  container.setAttribute(USER_REVEALED_ATTR, "1");
+}
+
+function wasPlotArmorUserRevealed(container) {
+  if (!(container instanceof Element)) return false;
+  return container.getAttribute(USER_REVEALED_ATTR) === "1";
+}
+
 function attachAtomicReveal(node, container) {
   // Capture-phase + stopImmediatePropagation so first click reaches us before
   // the host site's own click interceptors (Reddit shreddit, X article navigation)
@@ -283,6 +354,8 @@ function attachAtomicReveal(node, container) {
     event.preventDefault();
     event.stopImmediatePropagation();
     event.stopPropagation();
+    // Before DOM peel / async SEMANTIC_CHECK resolves: blocks in-flight blur (Reddit snap-back).
+    markPlotArmorUserRevealed(container);
     revealContainer(container);
   };
   node.addEventListener("click", handler, { capture: true });
@@ -322,9 +395,9 @@ function domDepth(node) {
 function revealContainer(container, options = {}) {
   const skipReport = options.skipReport === true;
 
-  // Reddit (and other hosts) can stack two+ blurred nodes inside one card.
-  // Peel deepest descendants first, then this node — one gesture clears the stack.
-  if (container instanceof Element) {
+  // Generic hosts can stack two+ blurred nodes inside one card.
+  // For Reddit comments, keep reveal local to the clicked comment.
+  if (container instanceof Element && !isRedditCommentContainer(container)) {
     let nested = Array.from(container.querySelectorAll(`:scope .${BLUR_CLASS}`)).filter((el) => el !== container);
     while (nested.length) {
       nested.sort((a, b) => domDepth(b) - domDepth(a));
@@ -396,7 +469,7 @@ function revealContainer(container, options = {}) {
       clearTimeout(autoRemoveTimer);
       reportText.textContent = "logged";
       reportBtn.classList.add("reported");
-      chrome.runtime.sendMessage({
+      void sendExtensionMessage({
         type: "REPORT_FALSE_POSITIVE",
         text: extractContainerText(container).slice(0, 500),
         show,
@@ -418,6 +491,7 @@ function revealContainer(container, options = {}) {
       container.style.position = "relative";
     }
     container.appendChild(reportBtn);
+    schedulePositionXReportButton(container, reportBtn);
   } else {
     // Inject inline at the end of the last text-bearing child so the button
     // flows naturally after the last word without overlapping anything.
@@ -434,6 +508,10 @@ function revealContainer(container, options = {}) {
 
 function blurContainer(container, meta = {}) {
   if (container.classList.contains(BLUR_CLASS)) return;
+  if (wasPlotArmorUserRevealed(container)) {
+    debugLog("skip blur: user already revealed this block", {});
+    return;
+  }
   ensureContainerPosition(container);
 
   const useDirectBlur = isXHost();
@@ -523,15 +601,13 @@ function blurContainer(container, meta = {}) {
     className: container.className,
     textLength: extractContainerText(container).length,
   });
-  chrome.runtime
-    .sendMessage({
-      type: "BLUR_APPLIED",
-      textLength: extractContainerText(container).length,
-      tagName: container.tagName,
-      className: container.className,
-      href: location.href,
-    })
-    .catch(() => {});
+  void sendExtensionMessage({
+    type: "BLUR_APPLIED",
+    textLength: extractContainerText(container).length,
+    tagName: container.tagName,
+    className: container.className,
+    href: location.href,
+  }).catch(() => {});
 }
 
 /** X/Twitter: pull "From …" / repost context lines that often sit outside the main tweet copy (TC#2). */
@@ -565,6 +641,28 @@ function extractXAttributionText(article) {
   return out.join(" ");
 }
 
+/** X/Twitter: quoted-tweet cards often render separately from the main tweet copy. */
+function extractXQuotedTweetText(article) {
+  const seen = new Set();
+  const out = [];
+  const push = (raw) => {
+    const t = String(raw || "").replace(/\s+/g, " ").trim();
+    if (t.length < 10 || t.length > 700 || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+
+  article.querySelectorAll('[data-testid="card.wrapper"] [data-testid="tweetText"]').forEach((n) => push(n.textContent));
+  article.querySelectorAll('[data-testid="card.wrapper"] blockquote, [data-testid="card.wrapper"] [role="blockquote"]').forEach((n) =>
+    push(n.textContent)
+  );
+  article.querySelectorAll('[data-testid="card.wrapper"] [lang], [data-testid="card.wrapper"] [dir="auto"]').forEach((n) =>
+    push(n.textContent)
+  );
+
+  return out.join(" ");
+}
+
 function extractContainerText(container) {
   const host = location.hostname.toLowerCase();
   if (!host.includes("reddit.com")) {
@@ -572,6 +670,8 @@ function extractContainerText(container) {
     if (isXHost()) {
       const extra = extractXAttributionText(container);
       if (extra) text = `${text} ${extra}`.replace(/\s+/g, " ").trim();
+      const quote = extractXQuotedTweetText(container);
+      if (quote) text = `${text} ${quote}`.replace(/\s+/g, " ").trim();
     }
     return text;
   }
@@ -656,32 +756,61 @@ async function evaluateContainer(container) {
   const minLengthForContainer = isRedditComment ? 20 : MIN_TEXT_LENGTH;
 
   if (!textToAnalyze || textToAnalyze.length < minLengthForContainer) {
+    // X hydrates tweet copy after mount; a first paint under MIN_TEXT_LENGTH used to mark
+    // processed and skip blur forever. Retry a few times before giving up (TC#X-hydrate).
+    if (isXHost()) {
+      const attempts = Number(container.dataset.paTextHydrationAttempts || "0");
+      const tooShort = !textToAnalyze || textToAnalyze.length < minLengthForContainer;
+      const allowRetry =
+        !textToAnalyze ||
+        (textToAnalyze.length >= 5 && textToAnalyze.length < MIN_TEXT_LENGTH);
+      if (attempts < 3 && tooShort && allowRetry) {
+        container.dataset.paTextHydrationAttempts = String(attempts + 1);
+        const delay = textToAnalyze ? 320 + attempts * 500 : 180 + attempts * 280;
+        setTimeout(() => {
+          if (observersStopped || !container.isConnected) return;
+          if (container.getAttribute(PROCESSED_ATTR) === "1") return;
+          void evaluateContainer(container);
+        }, delay);
+        return;
+      }
+    }
     container.setAttribute(PROCESSED_ATTR, "1");
     return;
   }
+  delete container.dataset.paTextHydrationAttempts;
+
   const analysisText = textToAnalyze.slice(0, MAX_ANALYZE_CHARS);
-  const sectionHint = getSectionHint(container);
+  const sectionHint = isXHost() ? "" : getSectionHint(container);
   const precedingContext = getPrecedingContext(container);
   debugLog("Evaluating container", { textLength: textToAnalyze.length, tag: container.tagName, hasPrecedingContext: Boolean(precedingContext) });
 
   try {
-    const response = await chrome.runtime.sendMessage({
+    const response = await sendExtensionMessage({
       type: "SEMANTIC_CHECK",
       textToAnalyze: analysisText,
       precedingContext,
       sectionHint,
       containerTag: container.tagName,
     });
-    debugLog("Semantic check response", response?.data || response);
+    if (response == null) {
+      debugLog("SEMANTIC_CHECK skipped: extension runtime unavailable", {});
+    } else {
+      debugLog("Semantic check response", response?.data || response);
+    }
 
     if (response?.ok && response.data?.isSpoiler) {
-      blurContainer(container, {
-        matchedShow: response.data?.matchedShow || "",
-        reason: response.data?.reason || "",
-        confidence: response.data?.confidence ?? null,
-        source: response.data?.source || "",
-      });
-      debugLog("Container blurred", { reason: response.data?.reason });
+      if (wasPlotArmorUserRevealed(container)) {
+        debugLog("skip blur after reveal: in-flight check resolved late", {});
+      } else {
+        blurContainer(container, {
+          matchedShow: response.data?.matchedShow || "",
+          reason: response.data?.reason || "",
+          confidence: response.data?.confidence ?? null,
+          source: response.data?.source || "",
+        });
+        debugLog("Container blurred", { reason: response.data?.reason });
+      }
     }
   } catch (error) {
     if (isContextInvalidated(error)) {
@@ -760,7 +889,7 @@ const intersectionObserver = new IntersectionObserver(
       }
     });
   },
-  { root: null, rootMargin: "400px 0px", threshold: 0.05 }
+  { root: null, rootMargin: `${PREFETCH_MARGIN_PX}px 0px`, threshold: 0.01 }
 );
 
 function observeContainer(container) {
@@ -768,9 +897,15 @@ function observeContainer(container) {
   if (shouldSkipContainer(container)) return;
   if (observedContainers.has(container)) return;
   observedContainers.add(container);
-  // IntersectionObserver fires immediately for elements already in viewport,
-  // so no separate enqueue needed here — visible ones get priority-queued there.
   intersectionObserver.observe(container);
+  // Eagerly queue near-viewport nodes so blur decisions can land before users
+  // visually scan the line/card.
+  const rect = container.getBoundingClientRect();
+  const viewHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
+  if (viewHeight > 0) {
+    const nearViewport = rect.bottom >= -PREFETCH_MARGIN_PX && rect.top <= viewHeight + PREFETCH_MARGIN_PX;
+    if (nearViewport) enqueueEvaluation(container, true);
+  }
 }
 
 function isRedditCommentContainer(container) {
@@ -885,11 +1020,14 @@ const mutationObserver = new MutationObserver((mutations) => {
 });
 
 function resetAndReevaluate() {
+  document.querySelectorAll(`[${USER_REVEALED_ATTR}]`).forEach((el) => {
+    el.removeAttribute(USER_REVEALED_ATTR);
+  });
   document.querySelectorAll(`[${PROCESSED_ATTR}]`).forEach((el) => {
     el.removeAttribute(PROCESSED_ATTR);
   });
   document.querySelectorAll(`.${BLUR_CLASS}`).forEach((container) => {
-    revealContainer(container);
+    revealContainer(container, { skipReport: true });
   });
   pendingEvaluationQueue.length = 0;
   debounceProcessVisible();
@@ -958,9 +1096,31 @@ function setupXScrollRediscover() {
   );
 }
 
-injectStyles();
-discoverContainers(document);
-mutationObserver.observe(document.body, { childList: true, subtree: true });
-setupSpaNavigationListener();
-setupXScrollRediscover();
-debugLog("Semantic scanner initialized");
+let plotArmorBooted = false;
+
+function bootPlotArmor() {
+  if (plotArmorBooted) return;
+  if (typeof document === "undefined" || !document.documentElement) return;
+  const ct = document.contentType || "";
+  if (/^image\//i.test(ct)) return;
+
+  injectStyles();
+
+  const run = () => {
+    if (plotArmorBooted) return;
+    const root = document.body || document.documentElement;
+    if (!root) return;
+    plotArmorBooted = true;
+    discoverContainers(document);
+    mutationObserver.observe(root, { childList: true, subtree: true });
+    setupSpaNavigationListener();
+    setupXScrollRediscover();
+    debugLog("Semantic scanner initialized");
+  };
+
+  if (document.body) run();
+  else if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run, { once: true });
+  else run();
+}
+
+bootPlotArmor();

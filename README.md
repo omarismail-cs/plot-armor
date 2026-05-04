@@ -14,13 +14,19 @@ Scaled for the README (GitHub will still open full-size if you click an image).
     <th align="center" width="50%">TMDB suggestions</th>
   </tr>
   <tr valign="top">
-    <td align="center">
-      <img src="./docs/popup-preview.png" width="320" alt="Plot Armor popup: shield list and search field" />
-      <p align="center"><sub>Protected shows, per-title toggles, search. <strong>Add</strong> stays off until you pick a suggestion.</sub></p>
+    <td align="center" width="50%">
+      <img src="./docs/popup-preview.png" width="320" height="374" alt="Plot Armor popup: shield list and search field" />
     </td>
-    <td align="center">
-      <img src="./docs/popup-tmdb-dropdown.png" width="320" alt="Plot Armor TMDB dropdown with posters and year labels" />
-      <p align="center"><sub>Live TMDB results with posters and type/year; choose a row, then <strong>Add</strong>.</sub></p>
+    <td align="center" width="50%">
+      <img src="./docs/popup-tmdb-dropdown.png" width="320" height="374" alt="Plot Armor TMDB dropdown with posters and year labels" />
+    </td>
+  </tr>
+  <tr valign="top">
+    <td align="center" width="50%">
+      <div align="center"><sub>Protected shows, per-title toggles, search. <strong>Add</strong> stays off until you pick a suggestion.</sub></div>
+    </td>
+    <td align="center" width="50%">
+      <div align="center"><sub>Live TMDB results with posters and type/year; choose a row, then <strong>Add</strong>.</sub></div>
     </td>
   </tr>
 </table>
@@ -36,14 +42,22 @@ What works today:
 - Toggle protection per title, plus pause all / enable all controls (stored in `activeProtectedShows`; the **background** spoiler check only considers titles that are not paused).
 - TMDB search suggestions include **poster thumbnails** (`poster_path` from the API, loaded from `image.tmdb.org`; declared in `manifest.json` host permissions).
 - Story context generation per title using TMDB metadata + OpenAI (with Wikipedia summaries when available).
-- **Spoiler detection (`background.js`, detector `v14.1`):**
+- **Spoiler detection (`background.js`, detector `v14.7`):**
   - **Tier 1** — fast entity/story-graph matching. The scan uses **main text plus optional preceding context** together so pronoun-only lines still pick up names from the line before.
   - **Escalation** — if Tier 1 does not match any entity, the pipeline **defaults to calling the LLM** whenever you have active shields, **unless** the snippet is very short or reads as **pure** meta (casting / reviews / release / production / music) with no spoiler-shaped cues. This favors **recall** over trying to list every possible “spoiler word” in regex form.
-  - **Tier 2** — OpenAI JSON classifier using model knowledge; **missing story graphs** use an empty fallback so new titles still get judged.
-  - **Verdict cache** — `evalCache` in `chrome.storage.local`, keyed in part by detector version so rule changes don’t reuse stale results.
+  - **Deterministic gates** — high-signal patterns can short-circuit to blur or hard-allow (e.g. relationship reveals, major spoiler-shaped cues with enough title context, speculative “leak” phrasing that overrides casting hard-allows, narrow **origin / injury reveal** phrasing when linked to a protected title). Full logic lives in `computeDeterministicSignals` / related helpers in `background.js`.
+  - **Tier 2** — OpenAI JSON classifier using model knowledge; **missing story graphs** use an empty fallback so new titles still get judged. Semantic judge failures log a **normalized error payload** (not opaque `[object Object]`) for debugging.
+  - **Verdict cache** — `evalCache` in `chrome.storage.local`, keyed in part by **detector version** (`DETECTOR_VERSION` in `background.js`) so rule changes don’t reuse stale results. After pulling detector updates, clear cache (see debug checklist) or expect mixed old/new behavior until it expires naturally.
   - When multiple titles are in play (e.g. after escalation), the service may run **one LLM call per title** until it gets a confident spoiler hit or exhausts the list — good accuracy, higher API use than a single batched call.
-- Blur + click-to-reveal on the page for blocks classified as spoilers.
-- False-positive reporting (`Not a spoiler?`) for tuning later.
+- **On-page behavior (`content.js`):**
+  - Blur + click-to-reveal; **X/Twitter** uses a full-card veil (backdrop) so media stays covered reliably.
+  - **Quote tweets:** quoted-card text is merged into the snippet sent for classification so quote-only spoilers are not skipped.
+  - **Less “visible then blur”:** larger intersection prefetch margin (~`1400px`) plus eager queueing for near-viewport nodes so evaluation starts earlier on fast scroll.
+  - **Reddit comments:** reveal is **per comment** (no inheriting “user revealed” from ancestors; nested stacked blurs don’t all peel on one click).
+  - **Virtualized feeds (X):** removed nodes are cleaned up (unobserve + queue) so the timeline does not stall.
+  - **Edge documents:** top-level `image/*` pages and missing `document.head` are handled without throwing; if `chrome.runtime` disappears after an extension reload, scanning **stops quietly** for that tab (refresh after reloading the extension).
+  - **X — “not a spoiler?”** after reveal: compact chip is positioned using the **Grok** control when present (`aria-label="Grok actions"`, English UI); falls back to a fixed offset if that node is missing.
+- False-positive reporting (`Not a spoiler?`): entries append to **`chrome.storage.local`** key **`false_positives`** (last **100** records: timestamp, url, show, text snippet, reason, confidence, source). Inspect via the debug checklist below.
 - Popup UX: loading states, active/standby header, typography and scrollbar polish.
 
 ## Tech stack
@@ -97,7 +111,7 @@ chrome.storage.sync.get(["protectedShows", "activeProtectedShows"], console.log)
 chrome.storage.local.get(["showContexts", "evalCache", "false_positives"], console.log);
 ```
 
-3. Clear semantic verdict cache before retesting:
+3. Clear semantic verdict cache before retesting (do this after changing `DETECTOR_VERSION` or spoiler rules):
 
 ```js
 chrome.storage.local.set({ evalCache: {} });
@@ -167,6 +181,7 @@ await runPlotArmorFixtures({ clearEvalCacheEachCase: true });
 - **Default LLM escalation** improves recall but increases **API cost and latency** versus a stricter local-only gate.
 - Results vary by page structure; Reddit and Wikipedia layouts are not fully uniform.
 - **Content script:** on storage changes, the current `resetAndReevaluate` path may **reveal all blurred blocks** before re-scanning — you can see a brief flash on some sites when the show list updates.
+- **X report chip placement** depends on finding the Grok button by English `aria-label`; other locales may only get the CSS fallback offset.
 - Context quality depends on upstream data and model behavior.
 
 ## Near-term priorities
