@@ -3,7 +3,7 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v14.7";
+const DETECTOR_VERSION = "v14.8";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -56,11 +56,21 @@ function isCelebrityExposeTabloidContext(text) {
 }
 
 function hasMajorSpoilerCue(text) {
-  return (
-    SIGNAL_PATTERNS.majorSpoilerCues.test(String(text || "")) &&
-    !isMerchandiseReturnContext(text) &&
-    !isCelebrityExposeTabloidContext(text)
-  );
+  const t = String(text || "");
+  if (!SIGNAL_PATTERNS.majorSpoilerCues.test(t)) return false;
+  if (isMerchandiseReturnContext(t) || isCelebrityExposeTabloidContext(t)) return false;
+
+  // Bare "reveals/revealed/revealing" is too broad in social/news context and
+  // caused hard-block false positives (e.g. finance/sports posts).
+  // Require nearby plot-shaped anchors when reveal language is present.
+  if (/\breveal(?:s|ed|ing)?\b/i.test(t)) {
+    const hasPlotRevealAnchor =
+      /\b(identity|secret identity|twist|ending|finale|dies|death|killed|murdered|betray(?:ed|al)|turns out|was behind|is actually|was actually|origin story|villain|mother|father|brother|sister|wife|husband)\b/i
+        .test(t);
+    if (!hasPlotRevealAnchor) return false;
+  }
+
+  return true;
 }
 
 function hasDeathCueForSignals(text) {

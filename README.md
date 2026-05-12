@@ -4,6 +4,22 @@ Plot Armor is a Chrome extension that helps reduce spoiler exposure while browsi
 
 Unlike pure keyword blockers, it combines local matching and semantic checks so it can still catch spoilers when the show title is not written directly.
 
+## Demo
+
+<div align="center">
+  <img src="./docs/plot-armor-add-show.gif" alt="Demo: searching for and adding a show to Plot Armor" />
+  <br />
+  <sub>Search TMDB, select a result with poster preview, then click Add to protect that title.</sub>
+</div>
+
+<br />
+
+<div align="center">
+  <img src="./docs/plot-armor-blocking-demo.gif" alt="Demo: Plot Armor blocking spoilers on a webpage" />
+  <br />
+  <sub>Spoiler content is automatically blurred and can be revealed with a click.</sub>
+</div>
+
 ## UI preview
 
 Scaled for the README (GitHub will still open full-size if you click an image).
