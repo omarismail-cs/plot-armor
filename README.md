@@ -61,9 +61,8 @@ What works today:
 - TMDB search suggestions include **poster thumbnails** (`poster_path` from the API, loaded from `image.tmdb.org`; declared in `manifest.json` host permissions).
 - Story context generation per title using TMDB metadata + OpenAI (with Wikipedia summaries when available).
 - **Spoiler detection (`background.js`, detector `v14.7`):**
-
-<details>
-<summary>⚙️ Technical Deep-Dive: How Spoiler Detection Works (Tier 1 & 2)</summary>
+  <details>
+  <summary>⚙️ Technical Deep-Dive: How Spoiler Detection Works (Tier 1 & 2)</summary>
 
   - **Tier 1** — fast entity/story-graph matching. The scan uses **main text plus optional preceding context** together so pronoun-only lines still pick up names from the line before.
   - **Escalation** — if Tier 1 does not match any entity, the pipeline **defaults to calling the LLM** whenever you have active shields, **unless** the snippet is very short or reads as **pure** meta (casting / reviews / release / production / music) with no spoiler-shaped cues. This favors **recall** over trying to list every possible "spoiler word" in regex form.
@@ -72,7 +71,7 @@ What works today:
   - **Verdict cache** — `evalCache` in `chrome.storage.local`, keyed in part by **detector version** (`DETECTOR_VERSION` in `background.js`) so rule changes don't reuse stale results. After pulling detector updates, clear cache (see debug checklist) or expect mixed old/new behavior until it expires naturally.
   - When multiple titles are in play (e.g. after escalation), the service may run **one LLM call per title** until it gets a confident spoiler hit or exhausts the list — good accuracy, higher API use than a single batched call.
 
-</details>
+  </details>
 - **On-page behavior (`content.js`):**
   - Blur + click-to-reveal; **X/Twitter** uses a full-card veil (backdrop) so media stays covered reliably.
   - **Quote tweets:** quoted-card text is merged into the snippet sent for classification so quote-only spoilers are not skipped.
