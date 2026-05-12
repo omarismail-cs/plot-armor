@@ -28,6 +28,15 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
     </td>
   </tr>
 </table>
+
+## UI preview
+
+Scaled for the README (GitHub will still open full-size if you click an image).
+
+<table>
+  <tr>
+    <th align="center" width="50%">Popup</th>
+    <th align="center" width="50%">TMDB suggestions</th>
   </tr>
   <tr valign="top">
     <td align="center" width="50%">
