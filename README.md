@@ -7,7 +7,7 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
 ## Demo
 
 <div align="center">
-  <img src="./docs/plot-armor-add-show.gif" width="500" alt="Adding a show" />
+  <img src="./docs/plot-armor-add-show.gif" width="450" alt="Adding a show" />
 </div>
 
 <p align="center">
@@ -15,7 +15,7 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
 </p>
 
 <div align="center">
-  <img src="./docs/plot-armor-blocking-demo.gif" width="350" alt="Blocking in action" />
+  <img src="./docs/plot-armor-blocking-demo.gif" width="380" alt="Blocking in action" />
 </div>
 
 <p align="center">
