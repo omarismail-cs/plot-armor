@@ -6,21 +6,17 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
 
 ## Demo
 
-### Adding a show
+<p align="center">
+  <img src="./docs/plot-armor-add-show.gif" width="420" alt="Adding a show" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="./docs/plot-armor-blocking-demo.gif" width="280" alt="Blocking in action" />
+</p>
 
-<div align="center">
-  <img src="./docs/plot-armor-add-show.gif" width="450" alt="Demo: searching for and adding a show to Plot Armor" />
-  <br />
-  <sub>Search TMDB, select a result with poster preview, then click Add to protect that title.</sub>
-</div>
-
-### Blocking in action
-
-<div align="center">
-  <img src="./docs/plot-armor-blocking-demo.gif" width="320" alt="Demo: Plot Armor blocking spoilers on a webpage" />
-  <br />
-  <sub>Spoiler content is automatically blurred and can be revealed with a click.</sub>
-</div>
+<p align="center">
+  <sub><strong>Adding a show:</strong> Search TMDB, select a result with poster preview, then click Add to protect that title.</sub>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <sub><strong>Blocking in action:</strong> Spoiler content is automatically blurred and can be revealed with a click.</sub>
+</p>
 
 ## UI preview
 
