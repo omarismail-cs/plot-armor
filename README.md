@@ -61,12 +61,18 @@ What works today:
 - TMDB search suggestions include **poster thumbnails** (`poster_path` from the API, loaded from `image.tmdb.org`; declared in `manifest.json` host permissions).
 - Story context generation per title using TMDB metadata + OpenAI (with Wikipedia summaries when available).
 - **Spoiler detection (`background.js`, detector `v14.7`):**
+
+<details>
+<summary>⚙️ Technical Deep-Dive: How Spoiler Detection Works (Tier 1 & 2)</summary>
+
   - **Tier 1** — fast entity/story-graph matching. The scan uses **main text plus optional preceding context** together so pronoun-only lines still pick up names from the line before.
-  - **Escalation** — if Tier 1 does not match any entity, the pipeline **defaults to calling the LLM** whenever you have active shields, **unless** the snippet is very short or reads as **pure** meta (casting / reviews / release / production / music) with no spoiler-shaped cues. This favors **recall** over trying to list every possible “spoiler word” in regex form.
-  - **Deterministic gates** — high-signal patterns can short-circuit to blur or hard-allow (e.g. relationship reveals, major spoiler-shaped cues with enough title context, speculative “leak” phrasing that overrides casting hard-allows, narrow **origin / injury reveal** phrasing when linked to a protected title). Full logic lives in `computeDeterministicSignals` / related helpers in `background.js`.
+  - **Escalation** — if Tier 1 does not match any entity, the pipeline **defaults to calling the LLM** whenever you have active shields, **unless** the snippet is very short or reads as **pure** meta (casting / reviews / release / production / music) with no spoiler-shaped cues. This favors **recall** over trying to list every possible "spoiler word" in regex form.
+  - **Deterministic gates** — high-signal patterns can short-circuit to blur or hard-allow (e.g. relationship reveals, major spoiler-shaped cues with enough title context, speculative "leak" phrasing that overrides casting hard-allows, narrow **origin / injury reveal** phrasing when linked to a protected title). Full logic lives in `computeDeterministicSignals` / related helpers in `background.js`.
   - **Tier 2** — OpenAI JSON classifier using model knowledge; **missing story graphs** use an empty fallback so new titles still get judged. Semantic judge failures log a **normalized error payload** (not opaque `[object Object]`) for debugging.
-  - **Verdict cache** — `evalCache` in `chrome.storage.local`, keyed in part by **detector version** (`DETECTOR_VERSION` in `background.js`) so rule changes don’t reuse stale results. After pulling detector updates, clear cache (see debug checklist) or expect mixed old/new behavior until it expires naturally.
+  - **Verdict cache** — `evalCache` in `chrome.storage.local`, keyed in part by **detector version** (`DETECTOR_VERSION` in `background.js`) so rule changes don't reuse stale results. After pulling detector updates, clear cache (see debug checklist) or expect mixed old/new behavior until it expires naturally.
   - When multiple titles are in play (e.g. after escalation), the service may run **one LLM call per title** until it gets a confident spoiler hit or exhausts the list — good accuracy, higher API use than a single batched call.
+
+</details>
 - **On-page behavior (`content.js`):**
   - Blur + click-to-reveal; **X/Twitter** uses a full-card veil (backdrop) so media stays covered reliably.
   - **Quote tweets:** quoted-card text is merged into the snippet sent for classification so quote-only spoilers are not skipped.
@@ -87,6 +93,9 @@ What works today:
 - Chrome Storage API (`sync` + `local`)
 - `MutationObserver` + `IntersectionObserver`
 
+<details>
+<summary>📂 Repository Structure & File Map</summary>
+
 ## Project files
 
 - `manifest.json` - extension configuration
@@ -97,6 +106,8 @@ What works today:
 - `tests/run-fixtures.js` - paste into the service worker console to run fixtures
 - `.env` - local API credentials (not committed; see `.gitignore`)
 - `docs/popup-preview.png` / `docs/popup-tmdb-dropdown.png` - README UI screenshots
+
+</details>
 
 ## Setup
 
@@ -138,6 +149,9 @@ TMDB_READ_ACCESS_TOKEN=your_tmdb_read_token
 3. Browse content pages (for example Reddit, Wikipedia, or X).
 4. If a block is classified as likely spoiler content, it is blurred and can be revealed manually.
 
+<details>
+<summary>🔍 Developer: Manual Debugging & Storage Checks</summary>
+
 ## Quick debug checklist
 
 1. Open the extension service worker console from `chrome://extensions`.
@@ -159,6 +173,11 @@ chrome.storage.local.set({ evalCache: {} });
 ```js
 chrome.storage.local.set({ showContexts: {} });
 ```
+
+</details>
+
+<details>
+<summary>🧪 Deterministic Fixture Testing (50 Fixed Cases)</summary>
 
 ## Deterministic fixture testing (50 fixed cases)
 
@@ -210,6 +229,8 @@ await runPlotArmorFixtures({ clearEvalCacheEachCase: true });
 - This suite hits the live semantic pipeline (`SEMANTIC_CHECK`), so it may consume OpenAI API calls. A full **50-case** run with `clearEvalCacheEachCase: true` can take on the order of **tens of seconds** — that is expected; real browsing still benefits from `evalCache` and only evaluating visible chunks.
 - The runner temporarily overrides `protectedShows` / `activeProtectedShows` per case and restores your previous sync values in a `finally` block. You do **not** need those titles pre-added in the popup for the harness to run.
 - Replace or extend `fixtures.json` if you want a different fixed batch of titles (keep `protectedShows` strings aligned with how you add titles in the UI).
+
+</details>
 
 ## Current known limits
 
