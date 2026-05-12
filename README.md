@@ -6,28 +6,21 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
 
 ## Demo
 
-<table>
-  <tr>
-    <th align="center" width="50%">Adding a show</th>
-    <th align="center" width="50%">Blocking in action</th>
-  </tr>
-  <tr valign="top">
-    <td align="center" width="50%">
-      <img src="./docs/plot-armor-add-show.gif" width="400" alt="Demo: searching for and adding a show to Plot Armor" />
-    </td>
-    <td align="center" width="50%">
-      <img src="./docs/plot-armor-blocking-demo.gif" width="400" alt="Demo: Plot Armor blocking spoilers on a webpage" />
-    </td>
-  </tr>
-  <tr valign="top">
-    <td align="center" width="50%">
-      <div align="center"><sub>Search TMDB, select a result with poster preview, then click Add to protect that title.</sub></div>
-    </td>
-    <td align="center" width="50%">
-      <div align="center"><sub>Spoiler content is automatically blurred and can be revealed with a click.</sub></div>
-    </td>
-  </tr>
-</table>
+### Adding a show
+
+<div align="center">
+  <img src="./docs/plot-armor-add-show.gif" width="450" alt="Demo: searching for and adding a show to Plot Armor" />
+  <br />
+  <sub>Search TMDB, select a result with poster preview, then click Add to protect that title.</sub>
+</div>
+
+### Blocking in action
+
+<div align="center">
+  <img src="./docs/plot-armor-blocking-demo.gif" width="320" alt="Demo: Plot Armor blocking spoilers on a webpage" />
+  <br />
+  <sub>Spoiler content is automatically blurred and can be revealed with a click.</sub>
+</div>
 
 ## UI preview
 
@@ -121,7 +114,7 @@ You can configure your API keys in two ways:
 Right-click the Plot Armor extension icon and select **Options**, or go to `chrome://extensions` and click **Extension options** under Plot Armor.
 
 <div align="center">
-  <img src="./docs/api-key-page.png" width="500" alt="Plot Armor API key configuration page" />
+  <img src="./docs/api-key-page.png" width="400" alt="Plot Armor API key configuration page" />
   <br />
   <sub>Enter your OpenAI API key and TMDB Read Access Token in the extension options.</sub>
 </div>
