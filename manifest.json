@@ -26,6 +26,7 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
+  "options_page": "options.html",
   "background": {
     "service_worker": "background.js"
   },

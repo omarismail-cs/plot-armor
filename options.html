@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>plot armor — settings</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: #09090b;
+      --foreground: #fafafa;
+      --secondary: #18181b;
+      --muted-foreground: #a1a1aa;
+      --border: #27272a;
+      --input: #27272a;
+      --primary: #3b82f6;
+      --radius-lg: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: auto;
+      text-rendering: optimizeLegibility;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 520px;
+      width: 100%;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      background: var(--background);
+      overflow: hidden;
+    }
+
+    .header {
+      border-bottom: 1px solid var(--border);
+      padding: 20px 24px;
+    }
+
+    h1 {
+      margin: 0 0 4px 0;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.012em;
+      color: var(--foreground);
+      text-transform: lowercase;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+    }
+
+    .content {
+      padding: 24px;
+    }
+
+    .form-group {
+      margin-bottom: 24px;
+    }
+
+    .form-group:last-of-type {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--foreground);
+      margin-bottom: 8px;
+    }
+
+    input[type="password"] {
+      width: 100%;
+      height: 40px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--secondary);
+      padding: 0 12px;
+      font-size: 13px;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-weight: 450;
+      color: var(--foreground);
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    input[type="password"]::placeholder {
+      color: var(--muted-foreground);
+      opacity: 0.6;
+    }
+
+    input[type="password"]:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary);
+    }
+
+    .hint {
+      margin-top: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+      line-height: 1.5;
+    }
+
+    .hint a {
+      color: var(--primary);
+      text-decoration: none;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }
+
+    .hint a:hover {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 28px;
+    }
+
+    button {
+      flex: 1;
+      height: 40px;
+      padding: 0 16px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, opacity 0.15s ease;
+    }
+
+    .btn-save {
+      border: 1px solid var(--primary);
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-save:hover {
+      background: #2563eb;
+      border-color: #2563eb;
+    }
+
+    .btn-save:active {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+    }
+
+    .btn-clear {
+      border: 1px solid var(--border);
+      background: var(--secondary);
+      color: var(--foreground);
+    }
+
+    .btn-clear:hover {
+      background: rgba(24, 24, 27, 0.8);
+    }
+
+    .status {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      display: none;
+      border: 1px solid transparent;
+    }
+
+    .status.success {
+      background: rgba(34, 197, 94, 0.12);
+      border-color: rgba(34, 197, 94, 0.3);
+      color: #4ade80;
+    }
+
+    .status.error {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.3);
+      color: #f87171;
+    }
+
+    .status.show {
+      display: block;
+      animation: slideIn 0.2s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 16px 24px;
+      text-align: center;
+    }
+
+    .footer-text {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted-foreground);
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>plot armor settings</h1>
+      <p class="subtitle">Configure API keys for spoiler detection</p>
+    </div>
+
+    <div class="content">
+      <form id="optionsForm">
+        <div class="form-group">
+          <label for="openaiKey">OpenAI API Key</label>
+          <input 
+            type="password" 
+            id="openaiKey" 
+            placeholder="sk-proj-..." 
+            autocomplete="off"
+          />
+          <p class="hint">
+            Required for semantic spoiler detection. 
+            <a href="https://platform.openai.com/api-keys" target="_blank">get key →</a>
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="tmdbToken">TMDB Read Access Token</label>
+          <input 
+            type="password" 
+            id="tmdbToken" 
+            placeholder="eyJhbGciOiJIUzI1NiJ9..." 
+            autocomplete="off"
+          />
+          <p class="hint">
+            Required for searching and adding shows. 
+            <a href="https://www.themoviedb.org/settings/api" target="_blank">get token →</a>
+          </p>
+        </div>
+
+        <div class="button-group">
+          <button type="submit" class="btn-save">Save Settings</button>
+          <button type="button" id="clearBtn" class="btn-clear">Clear Keys</button>
+        </div>
+
+        <div id="status" class="status"></div>
+      </form>
+    </div>
+
+    <div class="footer">
+      <p class="footer-text">
+        Your API keys are stored locally in your browser and never shared.
+      </p>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

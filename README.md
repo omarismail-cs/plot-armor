@@ -28,15 +28,6 @@ Unlike pure keyword blockers, it combines local matching and semantic checks so 
     </td>
   </tr>
 </table>
-
-## UI preview
-
-Scaled for the README (GitHub will still open full-size if you click an image).
-
-<table>
-  <tr>
-    <th align="center" width="50%">Popup</th>
-    <th align="center" width="50%">TMDB suggestions</th>
   </tr>
   <tr valign="top">
     <td align="center" width="50%">
@@ -108,16 +99,35 @@ What works today:
 ## Setup
 
 1. Clone this repo.
-2. Create/update `.env` in the project root:
+2. Open `chrome://extensions`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked** and select this project folder.
+
+### Configuring API Keys
+
+You can configure your API keys in two ways:
+
+**Option 1: Extension Options Page (Recommended)**
+
+Right-click the Plot Armor extension icon and select **Options**, or go to `chrome://extensions` and click **Extension options** under Plot Armor.
+
+<div align="center">
+  <img src="./docs/api-key-page.png" width="500" alt="Plot Armor API key configuration page" />
+  <br />
+  <sub>Enter your OpenAI API key and TMDB Read Access Token in the extension options.</sub>
+</div>
+
+- **OpenAI API Key**: Get yours at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+- **TMDB Read Access Token**: Get yours at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
+
+**Option 2: .env File (Legacy)**
+
+Create a `.env` file in the project root:
 
 ```env
 OPENAI_API_KEY=your_openai_key
 TMDB_READ_ACCESS_TOKEN=your_tmdb_read_token
 ```
-
-3. Open `chrome://extensions`.
-4. Enable **Developer mode**.
-5. Click **Load unpacked** and select this project folder.
 
 ## Usage
 

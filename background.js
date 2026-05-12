@@ -237,34 +237,50 @@ function looksLikeShowPage(pageUrl, showName) {
 async function loadApiKeyFromEnv() {
   if (cachedApiKey) return cachedApiKey;
 
-  const envUrl = chrome.runtime.getURL(".env");
-  const response = await fetch(envUrl);
-  if (!response.ok) throw new Error("Could not load .env file.");
-
-  const envText = await response.text();
-  const lines = envText.split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const separatorIndex = trimmed.indexOf("=");
-    if (separatorIndex === -1) continue;
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    let value = trimmed.slice(separatorIndex + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (key === "OPENAI_API_KEY" && value) {
-      cachedApiKey = value;
+  // First try to load from chrome.storage.local (Options page)
+  try {
+    const result = await chrome.storage.local.get(['OPENAI_API_KEY']);
+    if (result.OPENAI_API_KEY) {
+      cachedApiKey = result.OPENAI_API_KEY;
       return cachedApiKey;
     }
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Failed to load API key from storage, trying .env fallback`, error);
   }
 
-  throw new Error("OPENAI_API_KEY not found in .env");
+  // Fallback to .env file for backward compatibility
+  try {
+    const envUrl = chrome.runtime.getURL(".env");
+    const response = await fetch(envUrl);
+    if (!response.ok) throw new Error("Could not load .env file.");
+
+    const envText = await response.text();
+    const lines = envText.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex === -1) continue;
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      let value = trimmed.slice(separatorIndex + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+
+      if (key === "OPENAI_API_KEY" && value) {
+        cachedApiKey = value;
+        return cachedApiKey;
+      }
+    }
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Failed to load .env file`, error);
+  }
+
+  throw new Error("OPENAI_API_KEY not found. Please configure it in the extension options page.");
 }
 
 async function callOpenAI(messages, temperature = 0.2, extraBody = {}) {
@@ -295,34 +311,50 @@ async function callOpenAI(messages, temperature = 0.2, extraBody = {}) {
 async function loadTmdbReadTokenFromEnv() {
   if (cachedTmdbReadToken) return cachedTmdbReadToken;
 
-  const envUrl = chrome.runtime.getURL(".env");
-  const response = await fetch(envUrl);
-  if (!response.ok) throw new Error("Could not load .env file.");
-
-  const envText = await response.text();
-  const lines = envText.split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const separatorIndex = trimmed.indexOf("=");
-    if (separatorIndex === -1) continue;
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    let value = trimmed.slice(separatorIndex + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (key === "TMDB_READ_ACCESS_TOKEN" && value) {
-      cachedTmdbReadToken = value;
+  // First try to load from chrome.storage.local (Options page)
+  try {
+    const result = await chrome.storage.local.get(['TMDB_READ_ACCESS_TOKEN']);
+    if (result.TMDB_READ_ACCESS_TOKEN) {
+      cachedTmdbReadToken = result.TMDB_READ_ACCESS_TOKEN;
       return cachedTmdbReadToken;
     }
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Failed to load TMDB token from storage, trying .env fallback`, error);
   }
 
-  throw new Error("TMDB_READ_ACCESS_TOKEN not found in .env");
+  // Fallback to .env file for backward compatibility
+  try {
+    const envUrl = chrome.runtime.getURL(".env");
+    const response = await fetch(envUrl);
+    if (!response.ok) throw new Error("Could not load .env file.");
+
+    const envText = await response.text();
+    const lines = envText.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex === -1) continue;
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      let value = trimmed.slice(separatorIndex + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+
+      if (key === "TMDB_READ_ACCESS_TOKEN" && value) {
+        cachedTmdbReadToken = value;
+        return cachedTmdbReadToken;
+      }
+    }
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Failed to load .env file`, error);
+  }
+
+  throw new Error("TMDB_READ_ACCESS_TOKEN not found. Please configure it in the extension options page.");
 }
 
 async function searchTmdbTitles(query) {
