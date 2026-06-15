@@ -3,7 +3,7 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v14.8";
+const DETECTOR_VERSION = "v14.9";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -23,7 +23,7 @@ const SIGNAL_PATTERNS = {
   // "spotted on set", "reportedly returning as X", "seemingly appear" reveal character presences
   // in unaired content and should NOT be treated as safe casting announcements.
   speculativeLeak:
-    /\b(seemingly|reportedly|rumored|rumour|spotted on set|leaked|unconfirmed|allegedly|sources say|according to sources|return(?:s|ing)? as|appearing as|returning for future episodes?)\b/i,
+    /\b(seemingly|reportedly|rumou?rs?|rumou?ring|circulating|spotted on set|leaked|unconfirmed|allegedly|sources say|according to sources|return(?:s|ing)? as|appearing as|appearing in|will appear|appear(?:s|ing)?\s+in|returning for future episodes?)\b/i,
   originRevealCue:
     /\b(villain origin story|origin story|how (?:he|she|they) got (?:that|the) (?:scar|scars)|(?:scar|scars)\b.{0,20}\b(origin|backstory)|jumping off a cliff|fell off a cliff)\b/i,
 };
@@ -241,6 +241,22 @@ function normalizeForMatch(value) {
     .replace(/[^\w\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function hasFutureAppearanceInText(text) {
+  const t = String(text || "");
+  if (/\b(will|may|might|could|set to|expected to)\s+appear\b/i.test(t)) return true;
+  return /\bappear(?:s|ing)?\s+in\b/i.test(t) && SIGNAL_PATTERNS.speculativeLeak.test(t);
+}
+
+function protectedShowTitleInText(text, protectedShows) {
+  const normalizedText = normalizeForMatch(text);
+  if (!normalizedText) return false;
+  return protectedShows.some((showName) => {
+    const phrase = normalizeForMatch(showName);
+    if (!phrase || phrase.length < 8) return false;
+    return normalizedText.includes(phrase);
+  });
 }
 
 function looksLikeShowPage(pageUrl, showName) {
@@ -887,33 +903,32 @@ function extractContextTerms(showContext, showName = "") {
 }
 
 function tier1AnalyzeShow(textToAnalyze, showContext, showName = "") {
-  const text = String(textToAnalyze || "").toLowerCase();
-  const normalizedText = text
-    .replace(/[^\w\s']/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const normalizedText = normalizeForMatch(textToAnalyze);
   const entities = extractContextTerms(showContext, showName);
-  const terms = [];
+  const matchedTerms = [];
 
   entities.forEach((entity) => {
     const full = String(entity || "").toLowerCase().trim();
     if (!full) return;
-    terms.push(full);
 
-    // Also match meaningful parts of multi-word entities (e.g. "Matt Murdock" -> "murdock").
-    full
+    const normalizedPhrase = normalizeForMatch(full);
+    if (normalizedPhrase.includes(" ") && normalizedPhrase.length >= 8 && normalizedText.includes(normalizedPhrase)) {
+      matchedTerms.push(full);
+    }
+
+    const tokens = full
       .split(/\s+/)
       .map((token) => token.replace(/[^\w']/g, "").replace(/(?:'s|’s)$/i, ""))
-      .filter((token) => token.length >= 4 && !TIER1_TOKEN_BLOCKLIST.has(token))
-      .forEach((token) => terms.push(token));
+      .filter((token) => token.length >= 4 && !TIER1_TOKEN_BLOCKLIST.has(token));
+
+    tokens.forEach((token) => {
+      const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`(^|\\W)${escaped}(?:['’]s)?(?=$|\\W)`, "i");
+      if (regex.test(normalizedText)) matchedTerms.push(token);
+    });
   });
 
-  const uniqueTerms = [...new Set(terms)];
-  const matchedTerms = uniqueTerms.filter((term) => {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`(^|\\W)${escaped}(?:['’]s)?(?=$|\\W)`, "i");
-    return regex.test(normalizedText);
-  });
+  const uniqueTerms = [...new Set(matchedTerms)];
 
   if (matchedTerms.length) {
     console.info(`${LOG_PREFIX} Tier1 matched terms`, {
@@ -967,6 +982,9 @@ async function runSemanticJudge(showName, showContext, textToAnalyze, precedingC
     "- DO flag: reveals that a specific character appears in an unaired or future season/episode,",
     "  even if framed as casting news, set reports, or speculation (e.g. 'spotted on set as X', 'seemingly returning as Y').",
     "  Knowing a character appears in a season the user hasn't watched yet IS a spoiler.",
+    "- DO flag: rumor or leak posts that state a character will appear in upcoming media — even when the author",
+    "  dismisses or debunks the rumor. Stating the rumor content still spoils it.",
+    "- DO flag: crossover or guest-appearance rumors involving this title's characters in other upcoming films/shows.",
     "- A plot event is a spoiler regardless of which season it occurs in.",
     "",
     `Supplementary story graph:\n${storyGraphBlock}`,
@@ -1143,6 +1161,20 @@ function computeDeterministicSignals({
     };
   }
 
+  // Future appearance rumors (e.g. "rumors Daredevil will appear in Spider-Man: Brand New Day").
+  if (
+    hasFutureAppearanceInText(text) &&
+    strongestTier1MatchCount >= 1 &&
+    !hasRelationshipReveal &&
+    !hasTwistIdentity
+  ) {
+    return {
+      hardBlock: { matched: true, reason: "deterministic-future-appearance-rumor" },
+      hardAllow: { matched: false, reason: "" },
+      riskScore: Math.max(riskScore, 0.82),
+    };
+  }
+
   if (
     isLikelyShowPage &&
     looksLikeNonSpoilerContext &&
@@ -1216,6 +1248,7 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
     const hasOriginReveal = hasOriginRevealCue(normalized);
     const hasRelationshipReveal = SIGNAL_PATTERNS.relationshipReveal.test(normalized);
     const hasTwistIdentity = SIGNAL_PATTERNS.twistIdentity.test(normalized);
+    const hasFutureAppearance = hasFutureAppearanceInText(normalized);
     const looksNonSpoiler =
       SIGNAL_PATTERNS.nonSpoilerContext.test(normalized) ||
       SIGNAL_PATTERNS.castingAnnouncement.test(normalized);
@@ -1231,7 +1264,8 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
     if (hasOriginReveal) score += 0.4;
     if (hasTwistIdentity) score += 0.45;
     if (hasRelationshipReveal) score += 0.6;
-    if (looksNonSpoiler) score -= 0.4;
+    if (hasFutureAppearance) score += 0.55;
+    if (looksNonSpoiler && !hasFutureAppearance) score -= 0.4;
 
     if (score > bestScore) {
       bestScore = score;
@@ -1313,10 +1347,16 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       matchedShows.push(...protectedShows);
     } else {
       const isSpeculativeLeak = SIGNAL_PATTERNS.speculativeLeak.test(tier1Scope);
-      if (!selfLabelsSpoiler && !isSpeculativeLeak) {
+      const futureAppearanceRumor =
+        hasFutureAppearanceInText(tier1Scope) && protectedShowTitleInText(tier1Scope, protectedShows);
+      if (!selfLabelsSpoiler && !isSpeculativeLeak && !futureAppearanceRumor) {
         return { isSpoiler: false, reason: "tier1-no-match" };
       }
-      const escalationReason = selfLabelsSpoiler ? "self-labelled-spoiler" : "speculative-leak-cue";
+      const escalationReason = selfLabelsSpoiler
+        ? "self-labelled-spoiler"
+        : futureAppearanceRumor
+          ? "future-appearance-rumor"
+          : "speculative-leak-cue";
       console.info(
         `${LOG_PREFIX} SEMANTIC_CHECK escalating to LLM (${escalationReason})`,
         { protectedShows: protectedShows.length }
