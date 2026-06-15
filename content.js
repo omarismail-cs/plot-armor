@@ -30,7 +30,10 @@ function getExtensionRuntime() {
   return null;
 }
 
-async function sendExtensionMessage(message) {
+const MESSAGE_CHANNEL_CLOSED_RE =
+  /message channel closed before a response was received/i;
+
+async function sendExtensionMessage(message, { retries = 1 } = {}) {
   const rt = getExtensionRuntime();
   if (!rt) {
     if (!missingExtensionRuntimeLogged) {
@@ -40,7 +43,27 @@ async function sendExtensionMessage(message) {
     }
     return null;
   }
-  return rt.sendMessage(message);
+
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await rt.sendMessage(message);
+    } catch (error) {
+      lastError = error;
+      if (isContextInvalidated(error)) {
+        shutdownObservers();
+        return null;
+      }
+      const msg = String(error?.message || error);
+      if (MESSAGE_CHANNEL_CLOSED_RE.test(msg) && attempt < retries) {
+        debugLog("SEMANTIC_CHECK channel closed; retrying after service worker wake", { attempt });
+        await new Promise((resolve) => setTimeout(resolve, 400 + attempt * 300));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
 }
 
 let processVisibleDebounce = null;
@@ -52,7 +75,8 @@ const queuedContainers = new WeakSet();
 function cleanupObservedContainer(container) {
   if (!(container instanceof Element)) return;
   if (!observedContainers.has(container)) return;
-  if (container.classList.contains(BLUR_CLASS)) {
+  const blurSurface = getPlotArmorBlurSurface(container);
+  if (blurSurface.classList.contains(BLUR_CLASS) || container.classList.contains(BLUR_CLASS)) {
     revealContainer(container, { skipReport: true });
   }
   intersectionObserver.unobserve(container);
@@ -308,6 +332,78 @@ function isXHost() {
   return host.includes("twitter.com") || host.includes("x.com");
 }
 
+function isRedditHost() {
+  return location.hostname.toLowerCase().includes("reddit.com");
+}
+
+function isRedditCommentContainer(container) {
+  if (!(container instanceof Element)) return false;
+  return (
+    container.matches(REDDIT_COMMENT_SELECTOR) ||
+    String(container.getAttribute("thingid") || "").startsWith("t1_") ||
+    String(container.id || "").startsWith("comment-thing-")
+  );
+}
+
+/** Comment copy lives in slot="comment" (shreddit); blur/reveal should target that, not the whole card. */
+function findRedditCommentBody(container) {
+  if (!(container instanceof Element) || !isRedditHost() || !isRedditCommentContainer(container)) {
+    return null;
+  }
+
+  const slotted = container.querySelector(':scope > [slot="comment"]');
+  if (slotted instanceof Element) {
+    const rtjson = slotted.querySelector('[id$="-comment-rtjson-content"], [id$="-post-rtjson-content"]');
+    if (rtjson instanceof Element) {
+      const text = (rtjson.innerText || "").replace(/\s+/g, " ").trim();
+      if (text.length >= 5) return rtjson;
+    }
+    const text = (slotted.innerText || "").replace(/\s+/g, " ").trim();
+    if (text.length >= 5) return slotted;
+  }
+
+  const directRtjson = container.querySelector(
+    ':scope [id$="-comment-rtjson-content"], :scope [id$="-post-rtjson-content"]'
+  );
+  if (directRtjson instanceof Element) {
+    const text = (directRtjson.innerText || "").replace(/\s+/g, " ").trim();
+    if (text.length >= 5) return directRtjson;
+  }
+
+  return null;
+}
+
+function getPlotArmorBlurSurface(container) {
+  if (!(container instanceof Element)) return container;
+  return findRedditCommentBody(container) || container;
+}
+
+function resolvePlotArmorContainer(el) {
+  if (!(el instanceof Element)) return el;
+  if (isRedditCommentContainer(el)) return el;
+  const commentRoot = el.closest(REDDIT_COMMENT_SELECTOR);
+  if (commentRoot instanceof Element && findRedditCommentBody(commentRoot) === el) {
+    return commentRoot;
+  }
+  return el;
+}
+
+function appendInlineReportButton(target, reportBtn) {
+  if (!(target instanceof Element)) {
+    target.appendChild(reportBtn);
+    return;
+  }
+  const lastParagraph = target.querySelector(":scope p:last-of-type");
+  if (lastParagraph) {
+    if (!/\s$/.test(lastParagraph.textContent || "")) {
+      lastParagraph.appendChild(document.createTextNode(" "));
+    }
+    lastParagraph.appendChild(reportBtn);
+    return;
+  }
+  target.appendChild(reportBtn);
+}
+
 /** Place host report chip just left of X's Grok control (avoids overlap with Grok + overflow). */
 function schedulePositionXReportButton(container, reportBtn) {
   const gapPx = 10;
@@ -394,47 +490,55 @@ function domDepth(node) {
  */
 function revealContainer(container, options = {}) {
   const skipReport = options.skipReport === true;
+  const logicalContainer = resolvePlotArmorContainer(container);
+  const blurSurface = getPlotArmorBlurSurface(logicalContainer);
 
   // Generic hosts can stack two+ blurred nodes inside one card.
   // For Reddit comments, keep reveal local to the clicked comment.
-  if (container instanceof Element && !isRedditCommentContainer(container)) {
-    let nested = Array.from(container.querySelectorAll(`:scope .${BLUR_CLASS}`)).filter((el) => el !== container);
+  if (logicalContainer instanceof Element && !isRedditCommentContainer(logicalContainer)) {
+    let nested = Array.from(logicalContainer.querySelectorAll(`:scope .${BLUR_CLASS}`)).filter(
+      (el) => el !== logicalContainer
+    );
     while (nested.length) {
       nested.sort((a, b) => domDepth(b) - domDepth(a));
       const deepest = nested[0];
       revealContainer(deepest, { skipReport: true });
-      nested = Array.from(container.querySelectorAll(`:scope .${BLUR_CLASS}`)).filter((el) => el !== container);
+      nested = Array.from(logicalContainer.querySelectorAll(`:scope .${BLUR_CLASS}`)).filter(
+        (el) => el !== logicalContainer
+      );
     }
   }
 
   // Read meta before clearing attributes.
-  const show = container.dataset.paShow || "";
-  const reason = container.dataset.paReason || "";
-  const confidence = container.dataset.paConfidence || null;
-  const source = container.dataset.paSource || "";
+  const show = logicalContainer.dataset.paShow || "";
+  const reason = logicalContainer.dataset.paReason || "";
+  const confidence = logicalContainer.dataset.paConfidence || null;
+  const source = logicalContainer.dataset.paSource || "";
 
-  container.classList.remove(BLUR_CLASS);
-  container.removeAttribute("data-plot-armor-blurred");
-  delete container.dataset.paShow;
-  delete container.dataset.paReason;
-  delete container.dataset.paConfidence;
-  delete container.dataset.paSource;
-  container.style.position = "";
+  blurSurface.classList.remove(BLUR_CLASS);
+  blurSurface.removeAttribute("data-plot-armor-blurred");
+  logicalContainer.classList.remove(BLUR_CLASS);
+  logicalContainer.removeAttribute("data-plot-armor-blurred");
+  delete logicalContainer.dataset.paShow;
+  delete logicalContainer.dataset.paReason;
+  delete logicalContainer.dataset.paConfidence;
+  delete logicalContainer.dataset.paSource;
+  blurSurface.style.position = "";
+  logicalContainer.style.position = "";
 
-  const overlay = container.querySelector(`:scope > .${OVERLAY_CLASS}`);
+  const overlay = blurSurface.querySelector(`:scope > .${OVERLAY_CLASS}`);
   if (overlay) overlay.remove();
-  const veil = container.querySelector(":scope > .plot-armor-x-veil");
+  const veil = blurSurface.querySelector(":scope > .plot-armor-x-veil");
   if (veil) veil.remove();
-  const intercept = container.querySelector(`:scope > .plot-armor-intercept`);
+  const intercept = blurSurface.querySelector(":scope > .plot-armor-intercept");
   if (intercept) intercept.remove();
-  const existingReport = container.querySelector(".plot-armor-report-btn");
-  if (existingReport) existingReport.remove();
+  logicalContainer.querySelectorAll(".plot-armor-report-btn").forEach((btn) => btn.remove());
 
-  // Unwrap blurred content wrapper back into the container.
+  // Unwrap blurred content wrapper back into the blur surface.
   // No-op when the host-blur path was used (e.g. X) since there is no wrapper.
-  const wrapper = container.querySelector(":scope > .plot-armor-blur-wrapper");
+  const wrapper = blurSurface.querySelector(":scope > .plot-armor-blur-wrapper");
   if (wrapper) {
-    while (wrapper.firstChild) container.insertBefore(wrapper.firstChild, wrapper);
+    while (wrapper.firstChild) blurSurface.insertBefore(wrapper.firstChild, wrapper);
     wrapper.remove();
   }
 
@@ -442,10 +546,9 @@ function revealContainer(container, options = {}) {
     return;
   }
 
-  container.querySelectorAll(".plot-armor-report-btn").forEach((btn) => btn.remove());
-
   // Show the report button AFTER reveal so the user can read the content first.
   const onX = isXHost();
+  const onRedditComment = isRedditHost() && isRedditCommentContainer(logicalContainer);
   const reportBtn = document.createElement("button");
   reportBtn.className = onX ? "plot-armor-report-btn plot-armor-report-btn--host" : "plot-armor-report-btn";
   reportBtn.title = "Report this as a false positive";
@@ -471,7 +574,7 @@ function revealContainer(container, options = {}) {
       reportBtn.classList.add("reported");
       void sendExtensionMessage({
         type: "REPORT_FALSE_POSITIVE",
-        text: extractContainerText(container).slice(0, 500),
+        text: extractContainerText(logicalContainer).slice(0, 500),
         show,
         reason,
         confidence: confidence !== "" ? Number(confidence) : null,
@@ -487,34 +590,38 @@ function revealContainer(container, options = {}) {
     // Anchor in the top-right corner of the article. Container already has
     // `position: relative` set by ensureContainerPosition while blurred, but
     // revealContainer cleared inline `position`, so reapply briefly.
-    if (getComputedStyle(container).position === "static") {
-      container.style.position = "relative";
+    if (getComputedStyle(logicalContainer).position === "static") {
+      logicalContainer.style.position = "relative";
     }
-    container.appendChild(reportBtn);
-    schedulePositionXReportButton(container, reportBtn);
+    logicalContainer.appendChild(reportBtn);
+    schedulePositionXReportButton(logicalContainer, reportBtn);
+  } else if (onRedditComment) {
+    appendInlineReportButton(findRedditCommentBody(logicalContainer) || blurSurface, reportBtn);
   } else {
     // Inject inline at the end of the last text-bearing child so the button
     // flows naturally after the last word without overlapping anything.
-    const lastTextChild = Array.from(container.childNodes)
+    const lastTextChild = Array.from(logicalContainer.childNodes)
       .reverse()
       .find((n) => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent.trim()));
     if (lastTextChild && lastTextChild.nodeType === Node.ELEMENT_NODE) {
       lastTextChild.appendChild(reportBtn);
     } else {
-      container.appendChild(reportBtn);
+      logicalContainer.appendChild(reportBtn);
     }
   }
 }
 
 function blurContainer(container, meta = {}) {
-  if (container.classList.contains(BLUR_CLASS)) return;
+  const blurSurface = getPlotArmorBlurSurface(container);
+  if (blurSurface.classList.contains(BLUR_CLASS) || container.classList.contains(BLUR_CLASS)) return;
   if (wasPlotArmorUserRevealed(container)) {
     debugLog("skip blur: user already revealed this block", {});
     return;
   }
-  ensureContainerPosition(container);
+  ensureContainerPosition(blurSurface);
 
   const useDirectBlur = isXHost();
+  const redditCommentBodyOnly = blurSurface !== container;
   let blurWrapper = null;
 
   if (useDirectBlur) {
@@ -529,15 +636,22 @@ function blurContainer(container, meta = {}) {
     intercept.className = "plot-armor-intercept";
     attachAtomicReveal(intercept, container);
     container.appendChild(intercept);
+  } else if (redditCommentBodyOnly) {
+    // Reddit shreddit-comment: blur only slot="comment" copy, not meta/actions/replies.
+    blurWrapper = document.createElement("div");
+    blurWrapper.className = "plot-armor-blur-wrapper";
+    Array.from(blurSurface.childNodes).forEach((node) => blurWrapper.appendChild(node));
+    attachAtomicReveal(blurWrapper, container);
+    blurSurface.appendChild(blurWrapper);
   } else {
     // Wrap ALL child nodes (including bare text nodes) in a single div so
     // the blur filter covers everything, not just element children.
-    // On Reddit, nested comment containers must stay outside the wrapper so
+    // On Reddit posts, nested comment containers must stay outside the wrapper so
     // each reply is evaluated and revealed independently.
     blurWrapper = document.createElement("div");
     blurWrapper.className = "plot-armor-blur-wrapper";
 
-    const isReddit = location.hostname.toLowerCase().includes("reddit.com");
+    const isReddit = isRedditHost();
     const childSnapshot = Array.from(container.childNodes);
     const skippedChildren = [];
 
@@ -561,8 +675,8 @@ function blurContainer(container, meta = {}) {
     skippedChildren.forEach((node) => container.appendChild(node));
   }
 
-  container.classList.add(BLUR_CLASS);
-  container.setAttribute("data-plot-armor-blurred", "1");
+  blurSurface.classList.add(BLUR_CLASS);
+  blurSurface.setAttribute("data-plot-armor-blurred", "1");
 
   const overlay = document.createElement("div");
   overlay.className = OVERLAY_CLASS;
@@ -588,11 +702,9 @@ function blurContainer(container, meta = {}) {
   container.dataset.paSource = meta.source || "";
 
   attachAtomicReveal(overlay, container);
-  container.appendChild(overlay);
+  blurSurface.appendChild(overlay);
 
-  // Always center within the (already-relative) container. Range-rect math
-  // was unstable across Reddit gallery / shreddit / legacy DOM (TC#14); a
-  // simple top:50%; left:50% with translate(-50%,-50%) anchors reliably.
+  // Center within the blur surface (comment body on Reddit, full card elsewhere).
   overlay.style.top = "50%";
   overlay.style.left = "50%";
 
@@ -815,6 +927,8 @@ async function evaluateContainer(container) {
   } catch (error) {
     if (isContextInvalidated(error)) {
       shutdownObservers();
+    } else if (MESSAGE_CHANNEL_CLOSED_RE.test(String(error?.message || error))) {
+      debugLog("SEMANTIC_CHECK failed: background did not respond in time (service worker may have slept)", {});
     } else {
       console.error("Plot Armor semantic request failed", error);
     }
@@ -906,15 +1020,6 @@ function observeContainer(container) {
     const nearViewport = rect.bottom >= -PREFETCH_MARGIN_PX && rect.top <= viewHeight + PREFETCH_MARGIN_PX;
     if (nearViewport) enqueueEvaluation(container, true);
   }
-}
-
-function isRedditCommentContainer(container) {
-  if (!(container instanceof Element)) return false;
-  return (
-    container.matches(REDDIT_COMMENT_SELECTOR) ||
-    String(container.getAttribute("thingid") || "").startsWith("t1_") ||
-    String(container.id || "").startsWith("comment-thing-")
-  );
 }
 
 function shouldSkipContainer(container) {
@@ -1026,8 +1131,8 @@ function resetAndReevaluate() {
   document.querySelectorAll(`[${PROCESSED_ATTR}]`).forEach((el) => {
     el.removeAttribute(PROCESSED_ATTR);
   });
-  document.querySelectorAll(`.${BLUR_CLASS}`).forEach((container) => {
-    revealContainer(container, { skipReport: true });
+  document.querySelectorAll(`.${BLUR_CLASS}`).forEach((el) => {
+    revealContainer(resolvePlotArmorContainer(el), { skipReport: true });
   });
   pendingEvaluationQueue.length = 0;
   debounceProcessVisible();

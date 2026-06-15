@@ -30,6 +30,25 @@ const SIGNAL_PATTERNS = {
 const DEATH_CUE_REGEX =
   /\b(dies|die|death|kill(?:s|ed|ing)?|killed|murdered|slain|executed|fatal|killed off|shot|shooting|assassinated)\b/i;
 
+/** MV3 service workers can sleep during long SEMANTIC_CHECK / show-ingest work. */
+let swKeepAliveTimer = null;
+let swKeepAliveRefs = 0;
+
+function acquireServiceWorkerKeepAlive() {
+  swKeepAliveRefs += 1;
+  if (swKeepAliveTimer != null) return;
+  swKeepAliveTimer = setInterval(() => {
+    void chrome.runtime.getPlatformInfo?.().catch(() => {});
+  }, 20_000);
+}
+
+function releaseServiceWorkerKeepAlive() {
+  swKeepAliveRefs = Math.max(0, swKeepAliveRefs - 1);
+  if (swKeepAliveRefs > 0 || swKeepAliveTimer == null) return;
+  clearInterval(swKeepAliveTimer);
+  swKeepAliveTimer = null;
+}
+
 /** "killed my confidence" etc. — not character death. */
 function isFigurativeKilledContext(text) {
   const t = String(text || "");
@@ -1224,6 +1243,8 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
 }
 
 async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = "", containerTag = "", precedingContext = "") {
+  acquireServiceWorkerKeepAlive();
+  try {
   const originalText = String(textToAnalyze || "").trim();
   const text = originalText;
   if (!text) {
@@ -1401,13 +1422,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       }
     } catch (error) {
       const normalizedError = normalizeUnknownError(error);
-      console.error(`${LOG_PREFIX} semantic judge failed`, {
-        showName,
-        message: normalizedError.message,
-        name: normalizedError.name,
-        stack: normalizedError.stack,
-        details: normalizedError.details,
-      });
+      console.error(`${LOG_PREFIX} semantic judge failed`, normalizedError);
     }
   }
 
@@ -1423,9 +1438,12 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     analyzedTextLength: evaluationText.length,
   });
   return { ...finalVerdict, source: "semantic-fused", score: signals.riskScore };
+  } finally {
+    releaseServiceWorkerKeepAlive();
+  }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender) => {
   const type = message?.type;
   const showName = message?.showName;
   const textToAnalyze = message?.textToAnalyze;
@@ -1433,7 +1451,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const containerTag = message?.containerTag;
   const precedingContext = message?.precedingContext;
 
-  const run = async () => {
+  console.info(`${LOG_PREFIX} message received`, {
+    type,
+    showName,
+    hasText: Boolean(textToAnalyze),
+    sender: sender?.url || "unknown",
+  });
+
+  return (async () => {
     if (type === "SHOW_ADDED" && showName) return handleShowAdded(showName, message?.tmdbSelection);
     if (type === "SHOW_REMOVED" && showName) return handleShowRemoved(showName);
     if (type === "TMDB_SEARCH") return { results: await searchTmdbTitles(message?.query) };
@@ -1461,7 +1486,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         confidence: message?.confidence ?? null,
         source: message?.source || "",
       });
-      // Keep last 100 reports to avoid bloating storage.
       await chrome.storage.local.set({ false_positives: list.slice(-100) });
       console.info(`${LOG_PREFIX} REPORT_FALSE_POSITIVE saved`, {
         show: message?.show,
@@ -1471,18 +1495,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return { ok: true };
     }
     throw new Error("Unsupported message type");
-  };
-  console.info(`${LOG_PREFIX} message received`, {
-    type,
-    showName,
-    hasText: Boolean(textToAnalyze),
-    sender: sender?.url || "unknown",
-  });
-
-  run()
+  })()
     .then((result) => {
       console.info(`${LOG_PREFIX} message handled`, { type, ok: true, result });
-      sendResponse({ ok: true, data: result });
+      return { ok: true, data: result };
     })
     .catch((error) => {
       const normalizedError = normalizeUnknownError(error);
@@ -1492,12 +1508,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         stack: normalizedError.stack,
         details: normalizedError.details,
       });
-      // If a show-add flow blew up, record the error so the popup can show it.
       if (type === "SHOW_ADDED" && showName) {
         setShowLoadStatus(showName, { state: "error", error: normalizedError.message }).catch(() => {});
       }
-      sendResponse({ ok: false, error: normalizedError.message });
+      return { ok: false, error: normalizedError.message };
     });
-
-  return true;
 });
