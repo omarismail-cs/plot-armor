@@ -3,7 +3,7 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v14.9";
+const DETECTOR_VERSION = "v15.0";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -126,6 +126,54 @@ const TIER1_TOKEN_BLOCKLIST = new Set([
   "character",
   "characters",
   "revealed",
+  // Honorifics / family words from split names (e.g. "Father Lantom" → false "my father" hits).
+  "father",
+  "mother",
+  "sister",
+  "brother",
+  "uncle",
+  "aunt",
+  "cousin",
+  "daughter",
+  "husband",
+  "wife",
+  "parent",
+  "child",
+  "friend",
+  "lover",
+  "enemy",
+  // Common split tokens from superhero / genre names.
+  "doctor",
+  "captain",
+  "general",
+  "sergeant",
+  "agent",
+  "nurse",
+  "professor",
+  "master",
+  "priest",
+  "saint",
+  "king",
+  "queen",
+  "prince",
+  "princess",
+  "lord",
+  "lady",
+  "black",
+  "white",
+  "scarlet",
+  "golden",
+  "silver",
+  "young",
+  "little",
+  "great",
+  "dark",
+  "light",
+  "holy",
+  "devil",
+  "iron",
+  "steel",
+  "ghost",
 ]);
 let cachedApiKey = null;
 let cachedTmdbReadToken = null;
@@ -975,6 +1023,8 @@ async function runSemanticJudge(showName, showContext, textToAnalyze, precedingC
     "  direct story information from this title, respond with isSpoiler:false and confidence≤0.25.",
     "  Vague thematic overlap (e.g. mentions of 'leaving', 'fighting', 'shooting' in a real-world",
     "  or unrelated context) is NOT a spoiler.",
+    "- DO NOT flag: personal anecdotes, dating advice, religion, or everyday family words (father, mother, etc.)",
+    "  with no connection to this title's named characters or plot.",
     "- DO flag: concrete on-screen story beats involving named characters.",
     "- DO flag: character deaths, betrayals, twists, identity reveals, relationship outcomes, endings.",
     "- DO flag: named recurring antagonist + named central company/startup + sustained takeover or acquisition pressure",

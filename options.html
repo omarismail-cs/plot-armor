@@ -4,17 +4,28 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>plot armor — settings</title>
+  <link
+    href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
   <style>
     :root {
       color-scheme: dark;
-      --background: #09090b;
-      --foreground: #fafafa;
-      --secondary: #18181b;
-      --muted-foreground: #a1a1aa;
-      --border: #27272a;
-      --input: #27272a;
-      --primary: #3b82f6;
-      --radius-lg: 8px;
+      --background: #100c0a;
+      --foreground: #f3e7d6;
+      --secondary: #1c1714;
+      --muted-foreground: #9a8775;
+      --border: #2c231d;
+      --input: #2c231d;
+      --primary: #ff9e3d;
+      --accent: #ff5e7e;
+      --radius: 8px;
+      --font-sans: "Satoshi", system-ui, -apple-system, sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
     }
 
     * {
@@ -26,7 +37,7 @@
       min-height: 100vh;
       background: var(--background);
       color: var(--foreground);
-      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-family: var(--font-sans);
       font-size: 14px;
       line-height: 1.45;
       -webkit-font-smoothing: auto;
@@ -37,35 +48,102 @@
       padding: 40px 20px;
     }
 
-    .container {
+    .page-root {
+      position: relative;
       max-width: 520px;
       width: 100%;
-      border-radius: var(--radius-lg);
+      border-radius: var(--radius);
       border: 1px solid var(--border);
       background: var(--background);
       overflow: hidden;
     }
 
+    .page-root::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 50;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0) 0px,
+        rgba(0, 0, 0, 0) 2px,
+        rgba(0, 0, 0, 0.18) 3px,
+        rgba(0, 0, 0, 0.18) 3px
+      );
+      mix-blend-mode: multiply;
+    }
+
+    .crt-glow {
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(120% 80% at 50% 0%, rgba(255, 158, 61, 0.1), transparent 60%),
+        radial-gradient(120% 90% at 50% 110%, rgba(255, 94, 126, 0.1), transparent 55%);
+    }
+
+    .page-inner {
+      position: relative;
+      z-index: 10;
+    }
+
     .header {
-      border-bottom: 1px solid var(--border);
-      padding: 20px 24px;
+      padding: 24px 24px 0;
+    }
+
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .header-logo {
+      width: 26px;
+      height: 26px;
+      display: block;
+      flex-shrink: 0;
+      mix-blend-mode: screen;
+      opacity: 0.88;
     }
 
     h1 {
-      margin: 0 0 4px 0;
+      margin: 0;
       font-size: 18px;
       font-weight: 600;
-      letter-spacing: -0.012em;
+      letter-spacing: -0.02em;
       color: var(--foreground);
       text-transform: lowercase;
     }
 
     .subtitle {
       margin: 0;
+      font-family: var(--font-sans);
       font-size: 13px;
       font-weight: 500;
       color: var(--muted-foreground);
     }
+
+    .accent-stripe {
+      display: flex;
+      gap: 2px;
+      height: 4px;
+      margin: 16px 24px 0;
+      border-radius: 999px;
+      overflow: hidden;
+      opacity: 0.8;
+    }
+
+    .accent-stripe span {
+      flex: 1;
+    }
+
+    .accent-stripe span:nth-child(1) { background: #ffc857; }
+    .accent-stripe span:nth-child(2) { background: #ff9e3d; }
+    .accent-stripe span:nth-child(3) { background: #ff7a4d; }
+    .accent-stripe span:nth-child(4) { background: #ff5e7e; }
+    .accent-stripe span:nth-child(5) { background: #d94f6c; }
 
     .content {
       padding: 24px;
@@ -90,13 +168,13 @@
     input[type="password"] {
       width: 100%;
       height: 40px;
-      border-radius: 6px;
+      border-radius: var(--radius);
       border: 1px solid var(--border);
-      background: var(--secondary);
+      background: color-mix(in srgb, var(--secondary) 60%, transparent);
       padding: 0 12px;
       font-size: 13px;
-      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-      font-weight: 450;
+      font-family: var(--font-sans);
+      font-weight: 500;
       color: var(--foreground);
       outline: none;
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -104,16 +182,17 @@
 
     input[type="password"]::placeholder {
       color: var(--muted-foreground);
-      opacity: 0.6;
+      opacity: 0.7;
     }
 
     input[type="password"]:focus {
       border-color: var(--primary);
-      box-shadow: 0 0 0 1px var(--primary);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent);
     }
 
     .hint {
       margin-top: 6px;
+      font-family: var(--font-sans);
       font-size: 12px;
       font-weight: 500;
       color: var(--muted-foreground);
@@ -123,12 +202,11 @@
     .hint a {
       color: var(--primary);
       text-decoration: none;
-      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-      font-size: 11px;
-      letter-spacing: 0.02em;
+      font-weight: 500;
     }
 
     .hint a:hover {
+      color: var(--accent);
       text-decoration: underline;
       text-underline-offset: 2px;
     }
@@ -143,43 +221,45 @@
       flex: 1;
       height: 40px;
       padding: 0 16px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
+      border-radius: var(--radius);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 500;
       cursor: pointer;
-      transition: background 0.15s ease, opacity 0.15s ease;
+      transition:
+        background 0.15s ease,
+        border-color 0.15s ease,
+        color 0.15s ease;
     }
 
     .btn-save {
       border: 1px solid var(--primary);
       background: var(--primary);
-      color: white;
+      color: #1a120c;
     }
 
     .btn-save:hover {
-      background: #2563eb;
-      border-color: #2563eb;
-    }
-
-    .btn-save:active {
-      background: #1d4ed8;
-      border-color: #1d4ed8;
+      background: #ffb35c;
+      border-color: #ffb35c;
     }
 
     .btn-clear {
       border: 1px solid var(--border);
-      background: var(--secondary);
+      background: color-mix(in srgb, var(--secondary) 60%, transparent);
       color: var(--foreground);
     }
 
     .btn-clear:hover {
-      background: rgba(24, 24, 27, 0.8);
+      border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      color: var(--accent);
     }
 
     .status {
       margin-top: 16px;
       padding: 12px 14px;
-      border-radius: 6px;
+      border-radius: var(--radius);
+      font-family: var(--font-sans);
       font-size: 13px;
       font-weight: 500;
       display: none;
@@ -187,15 +267,15 @@
     }
 
     .status.success {
-      background: rgba(34, 197, 94, 0.12);
-      border-color: rgba(34, 197, 94, 0.3);
-      color: #4ade80;
+      background: color-mix(in srgb, var(--primary) 12%, transparent);
+      border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+      color: var(--primary);
     }
 
     .status.error {
-      background: rgba(239, 68, 68, 0.12);
-      border-color: rgba(239, 68, 68, 0.3);
-      color: #f87171;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+      color: var(--accent);
     }
 
     .status.show {
@@ -222,6 +302,7 @@
 
     .footer-text {
       margin: 0;
+      font-family: var(--font-sans);
       font-size: 12px;
       font-weight: 500;
       color: var(--muted-foreground);
@@ -230,82 +311,69 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>plot armor settings</h1>
-      <p class="subtitle">Configure API keys for spoiler detection</p>
-    </div>
-
-    <div class="content">
-      <form id="optionsForm">
-        <div class="form-group">
-          <label for="openaiKey">OpenAI API Key</label>
-          <input 
-            type="password" 
-            id="openaiKey" 
-            placeholder="sk-proj-..." 
-            autocomplete="off"
-          />
-          <p class="hint">
-            Required for semantic spoiler detection. 
-            <a href="https://platform.openai.com/api-keys" target="_blank">get key →</a>
-          </p>
+  <div class="page-root">
+    <div class="crt-glow" aria-hidden="true"></div>
+    <div class="page-inner">
+      <div class="header">
+        <div class="header-brand">
+          <img class="header-logo" src="icons/logo-pa.png" alt="" width="26" height="26" />
+          <h1>plot armor settings</h1>
         </div>
+        <p class="subtitle">Configure API keys for spoiler detection</p>
+      </div>
 
-        <div class="form-group">
-          <label for="tmdbToken">TMDB Read Access Token</label>
-          <input 
-            type="password" 
-            id="tmdbToken" 
-            placeholder="eyJhbGciOiJIUzI1NiJ9..." 
-            autocomplete="off"
-          />
-          <p class="hint">
-            Required for searching and adding shows. 
-            <a href="https://www.themoviedb.org/settings/api" target="_blank">get token →</a>
-          </p>
-        </div>
+      <div class="accent-stripe" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
 
-        <div class="form-group">
-          <label for="supabaseUrl">Supabase project URL (optional)</label>
-          <input
-            type="url"
-            id="supabaseUrl"
-            placeholder="https://abcdefgh.supabase.co"
-            autocomplete="off"
-          />
-          <p class="hint">
-            Stores “not a spoiler?” reports in your Supabase table instead of only local storage.
-            Run <code>supabase/setup.sql</code> in the SQL editor first.
-          </p>
-        </div>
+      <div class="content">
+        <form id="optionsForm">
+          <div class="form-group">
+            <label for="openaiKey">OpenAI API Key</label>
+            <input
+              type="password"
+              id="openaiKey"
+              placeholder="sk-proj-..."
+              autocomplete="off"
+            />
+            <p class="hint">
+              Required for semantic spoiler detection.
+              <a href="https://platform.openai.com/api-keys" target="_blank">get key →</a>
+            </p>
+          </div>
 
-        <div class="form-group">
-          <label for="supabaseAnonKey">Supabase anon key (optional)</label>
-          <input
-            type="password"
-            id="supabaseAnonKey"
-            placeholder="eyJhbGciOiJIUzI1NiJ9..."
-            autocomplete="off"
-          />
-          <p class="hint">
-            Project Settings → API → <code>anon</code> public key. Use insert-only RLS from setup.sql.
-          </p>
-        </div>
+          <div class="form-group">
+            <label for="tmdbToken">TMDB Read Access Token</label>
+            <input
+              type="password"
+              id="tmdbToken"
+              placeholder="eyJhbGciOiJIUzI1NiJ9..."
+              autocomplete="off"
+            />
+            <p class="hint">
+              Required for searching and adding shows.
+              <a href="https://www.themoviedb.org/settings/api" target="_blank">get token →</a>
+            </p>
+          </div>
 
-        <div class="button-group">
-          <button type="submit" class="btn-save">Save Settings</button>
-          <button type="button" id="clearBtn" class="btn-clear">Clear Keys</button>
-        </div>
+          <div class="button-group">
+            <button type="submit" class="btn-save">Save Settings</button>
+            <button type="button" id="clearBtn" class="btn-clear">Clear Keys</button>
+          </div>
 
-        <div id="status" class="status"></div>
-      </form>
-    </div>
+          <div id="status" class="status"></div>
+        </form>
+      </div>
 
-    <div class="footer">
-      <p class="footer-text">
-        Keys and Supabase settings are stored locally in your browser. Reports may include page URLs and text snippets.
-      </p>
+      <div class="footer">
+        <p class="footer-text">
+          Keys are stored locally in your browser and never sent to any server except OpenAI and TMDB.
+        </p>
+      </div>
     </div>
   </div>
 

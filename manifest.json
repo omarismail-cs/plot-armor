@@ -8,8 +8,7 @@
     "https://api.openai.com/*",
     "https://api.themoviedb.org/*",
     "https://image.tmdb.org/*",
-    "https://en.wikipedia.org/*",
-    "https://*.supabase.co/*"
+    "https://en.wikipedia.org/*"
   ],
   "action": {
     "default_title": "Plot Armor",
@@ -28,6 +27,9 @@
     "128": "icons/icon-128.png"
   },
   "options_page": "options.html",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://api.fontshare.com https://fonts.googleapis.com; font-src 'self' https://cdn.fontshare.com https://fonts.gstatic.com data:; img-src 'self' https://image.tmdb.org data:;"
+  },
   "background": {
     "service_worker": "background.js"
   },

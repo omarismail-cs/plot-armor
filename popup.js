@@ -11,8 +11,6 @@ const metricsTextEl = document.getElementById("metricsText");
 const suggestionsEl = document.getElementById("suggestions");
 const pauseAllBtn = document.getElementById("pauseAllBtn");
 const enableAllBtn = document.getElementById("enableAllBtn");
-const headerShieldStatusEl = document.getElementById("headerShieldStatus");
-const headerShieldLabelEl = document.getElementById("headerShieldLabel");
 
 let searchDebounce = null;
 let latestSearchToken = 0;
@@ -54,29 +52,25 @@ function syncAddButtonState() {
   addBtn.setAttribute("aria-disabled", canAdd ? "false" : "true");
 }
 
-function fillPosterEl(container, url) {
-  container.innerHTML = "";
+function fillPosterImg(img, url, showName = "") {
+  const alt = showName ? `${showName} poster` : "";
+  img.classList.remove("poster--empty");
   if (!url) {
-    const fb = document.createElement("span");
-    fb.className = "poster-fallback";
-    fb.textContent = "—";
-    container.appendChild(fb);
+    img.removeAttribute("src");
+    img.alt = alt;
+    img.classList.add("poster--empty");
     return;
   }
-  const img = document.createElement("img");
   img.src = url;
-  img.alt = "";
+  img.alt = alt;
   img.loading = "lazy";
   img.decoding = "async";
   img.referrerPolicy = "no-referrer";
-  img.addEventListener("error", () => {
-    container.innerHTML = "";
-    const fb = document.createElement("span");
-    fb.className = "poster-fallback";
-    fb.textContent = "—";
-    container.appendChild(fb);
-  });
-  container.appendChild(img);
+  img.onerror = () => {
+    img.removeAttribute("src");
+    img.alt = alt;
+    img.classList.add("poster--empty");
+  };
 }
 
 function saveThumbnails() {
@@ -87,14 +81,6 @@ function saveThumbnails() {
 
 function isShowActive(showName) {
   return activeShowMap[showName] !== false;
-}
-
-function updateHeaderShieldState(shows, activeCount) {
-  if (!headerShieldStatusEl || !headerShieldLabelEl) return;
-  const blocking = shows.length > 0 && activeCount > 0;
-  headerShieldStatusEl.classList.toggle("is-standby", !blocking);
-  headerShieldLabelEl.textContent = blocking ? "System Active" : "Standby";
-  headerShieldStatusEl.setAttribute("aria-label", blocking ? "Shields blocking spoilers" : "No shields active");
 }
 
 function saveSyncState(shows) {
@@ -128,6 +114,51 @@ function loadThumbnails() {
   });
 }
 
+let clapperPatternSeq = 0;
+
+function clapperboardToggleUi() {
+  const uid = ++clapperPatternSeq;
+  const stripeId = `pa-stripes-${uid}`;
+  const armId = `clapper-arm-${uid}`;
+  const wrap = document.createElement("span");
+  wrap.className = "pa-clapper-ui";
+  wrap.innerHTML = `
+    <svg width="28" height="28" viewBox="2 3 18 21" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true">
+      <defs>
+        <pattern
+          id="${stripeId}"
+          patternUnits="userSpaceOnUse"
+          width="6"
+          height="6"
+          patternTransform="rotate(-45 4 12.5)"
+        >
+          <rect width="3" height="6" fill="currentColor" />
+        </pattern>
+      </defs>
+      <g class="pa-clapper-body">
+        <rect
+          class="pa-clapper-body-fill"
+          x="4"
+          y="12.5"
+          width="15"
+          height="11.5"
+          rx="0.8"
+          fill="currentColor"
+          stroke="none"
+        />
+        <rect x="4" y="12.5" width="15" height="11.5" rx="0.8" />
+        <rect x="4" y="12.5" width="15" height="3" fill="url(#${stripeId})" stroke="none" />
+      </g>
+      <g id="${armId}" class="clapper-arm pa-clapper-arm">
+        <rect x="4" y="8.5" width="15" height="4" rx="0.5" fill="currentColor" fill-opacity="0.12" stroke="none" />
+        <rect x="4" y="8.5" width="15" height="4" rx="0.5" fill="url(#${stripeId})" stroke="none" />
+        <rect x="4" y="8.5" width="15" height="4" rx="0.5" fill="none" />
+      </g>
+      <circle cx="4" cy="12.5" r="0.85" fill="currentColor" stroke="none" />
+    </svg>`;
+  return wrap;
+}
+
 function removeIconSvg() {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
@@ -155,7 +186,6 @@ function renderShows(shows) {
   if (metricsTextEl) {
     metricsTextEl.textContent = `${activeCount}/${shows.length} Shields Active`;
   }
-  updateHeaderShieldState(shows, activeCount);
 
   if (!shows.length) {
     emptyEl.classList.remove("hidden");
@@ -170,52 +200,58 @@ function renderShows(shows) {
 
   shows.forEach((show) => {
     const li = document.createElement("li");
-    li.className = "show-row";
+    li.className = "media-row";
     li.dataset.show = show;
     if (!isShowActive(show) && !pendingKeywordSync.has(show)) li.classList.add("show-paused");
 
-    const poster = document.createElement("div");
-    poster.className = "poster";
-    fillPosterEl(poster, posterUrlFromPath(showThumbnails[show]));
+    const posterWrap = document.createElement("div");
+    posterWrap.className = "poster-wrap";
 
-    const info = document.createElement("div");
-    info.className = "show-info";
+    const posterImg = document.createElement("img");
+    posterImg.className = "poster";
+    fillPosterImg(posterImg, posterUrlFromPath(showThumbnails[show]), show);
+    posterWrap.appendChild(posterImg);
 
-    const titleEl = document.createElement("span");
-    titleEl.className = "show-title";
+    const meta = document.createElement("div");
+    meta.className = "meta-content";
+
+    const titleEl = document.createElement("h3");
+    titleEl.className = "title";
     titleEl.textContent = show;
-
-    const refEl = document.createElement("span");
-    refEl.className = "show-ref";
-    refEl.textContent = refIdForShow(show);
 
     const statusLine = document.createElement("span");
     statusLine.className = "show-sync-status";
     statusLine.setAttribute("aria-live", "polite");
 
-    info.appendChild(titleEl);
-    info.appendChild(statusLine);
-    info.appendChild(refEl);
+    const refEl = document.createElement("span");
+    refEl.className = "ref-code";
+    refEl.textContent = refIdForShow(show);
 
-    const controls = document.createElement("div");
-    controls.className = "show-controls";
+    meta.appendChild(titleEl);
+    meta.appendChild(statusLine);
+    meta.appendChild(refEl);
 
-    const swLabel = document.createElement("label");
-    swLabel.className = "pa-switch";
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    const toggleBtn = document.createElement("label");
+    toggleBtn.className = "toggle-btn pa-clapper";
     const swInput = document.createElement("input");
     swInput.type = "checkbox";
-    swInput.className = "pa-switch-input";
+    swInput.className = "pa-clapper-input";
     swInput.dataset.show = show;
     swInput.checked = isShowActive(show);
-    swInput.setAttribute("aria-label", `Protection for ${show}`);
-    const swUi = document.createElement("span");
-    swUi.className = "pa-switch-ui";
-    swLabel.appendChild(swInput);
-    swLabel.appendChild(swUi);
+    swInput.setAttribute(
+      "aria-label",
+      isShowActive(show) ? `Shield active for ${show} — click to pause` : `Shield paused for ${show} — click to enable`
+    );
+    const swUi = clapperboardToggleUi();
+    toggleBtn.appendChild(swInput);
+    toggleBtn.appendChild(swUi);
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
-    removeBtn.className = "remove-btn";
+    removeBtn.className = "delete-btn";
     removeBtn.dataset.show = show;
     removeBtn.setAttribute("aria-label", `Remove ${show}`);
     removeBtn.appendChild(removeIconSvg());
@@ -232,15 +268,15 @@ function renderShows(shows) {
       const spin = document.createElement("div");
       spin.className = "poster-loading-spinner";
       overlay.appendChild(spin);
-      poster.appendChild(overlay);
+      posterWrap.appendChild(overlay);
     }
 
-    controls.appendChild(swLabel);
-    controls.appendChild(removeBtn);
+    actions.appendChild(toggleBtn);
+    actions.appendChild(removeBtn);
 
-    li.appendChild(poster);
-    li.appendChild(info);
-    li.appendChild(controls);
+    li.appendChild(posterWrap);
+    li.appendChild(meta);
+    li.appendChild(actions);
     listEl.appendChild(li);
   });
 }
@@ -354,7 +390,7 @@ inputEl.addEventListener("input", () => {
 });
 
 listEl.addEventListener("change", async (event) => {
-  const input = event.target.closest(".pa-switch-input");
+  const input = event.target.closest(".pa-clapper-input");
   if (!input) return;
   const showToToggle = input.dataset.show;
   if (!showToToggle) return;
@@ -365,7 +401,7 @@ listEl.addEventListener("change", async (event) => {
 });
 
 listEl.addEventListener("click", async (event) => {
-  const removeBtn = event.target.closest(".remove-btn");
+  const removeBtn = event.target.closest(".delete-btn");
   if (!removeBtn) return;
 
   const showToRemove = removeBtn.dataset.show;
