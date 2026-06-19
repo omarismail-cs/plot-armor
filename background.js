@@ -3,7 +3,7 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v15.0";
+const DETECTOR_VERSION = "v15.4";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -16,14 +16,17 @@ const SIGNAL_PATTERNS = {
   // Note: "costume" intentionally omitted — phrases like "in the Daredevil costume"
   // are plot-shaped (TC#1) and must not bypass escalation via this channel.
   nonSpoilerContext:
-    /\b(cast|casting|production|development|filming|designer|ratings|rotten tomatoes|metacritic|review|critical consensus|release|soundtrack|music|announced|joined the cast|portray|portrayed|reception|netflix|disney|hulu|amazon|apple tv|streaming|license|licens(?:ing|ed)|rights|renewed|showrunner|executive producer|distribution|distributor|broadcast|premiere|parental controls|home media|blu.ray|dvd|box set|season order|episode count|budget|filming location|spin.?off|crossover|cameo)\b/i,
+    /\b(cast|casting|production|development|filming|designer|ratings|rotten tomatoes|metacritic|review|critical consensus|release|soundtrack|music|announced|joined the cast|portray|portrayed|reception|netflix|disney|hulu|amazon|apple tv|streaming|license|licens(?:ing|ed)|rights|renewed|showrunner|executive producer|distribution|distributor|broadcast|premiere|parental controls|home media|blu.ray|dvd|box set|season order|episode count|budget|filming location|spin.?off|crossover|cameo|directed by|written by|created by|co-?created by|starring|airs?(?:\s+on|\s+every|\s+at)?|air date|time slot|runtime|viewership|scheduling)\b/i,
+  // Schedule / review / credits phrasing — safe to skip LLM on social feeds when no plot cues.
+  reviewMetaDiscussion:
+    /\b(directed by|written by|created by|co-?created by|starring|airs?(?:\s+on|\s+every|\s+at)?|air(?:s|ed|ing)?\s+(?:on|at|every)|air date|time slot|runtime|episode guide|season finale review|series finale review|finale review|episode review|spoiler[- ]free review|no plot spoilers|reviewers? (?:praised|noted|said|wrote)|critical reception|viewership (?:for|of)|renewed for (?:a )?(?:second|third|fourth|fifth) season|timeslot|time slot)\b/i,
   castingAnnouncement:
     /\b(announced that|was cast as|joined the cast|renewed for|return(?:s|ed) for|guest appearance|showrunner|executive producer|prior commitments|writers? for|fbi agent|season one returners|in june|in july|in september|in november)\b/i,
   // Speculative/leak language — cancels casting/production hard-allows and forces LLM evaluation.
   // "spotted on set", "reportedly returning as X", "seemingly appear" reveal character presences
   // in unaired content and should NOT be treated as safe casting announcements.
   speculativeLeak:
-    /\b(seemingly|reportedly|rumou?rs?|rumou?ring|circulating|spotted on set|leaked|unconfirmed|allegedly|sources say|according to sources|return(?:s|ing)? as|appearing as|appearing in|will appear|appear(?:s|ing)?\s+in|returning for future episodes?)\b/i,
+    /\b(seemingly|reportedly|apparently|supposedly|rumou?rs?|rumou?ring|circulating|spotted on set|leaked|unconfirmed|allegedly|sources say|according to sources|we'?ll have|we will have|return(?:s|ing)? as|appearing as|appearing in|will appear|appear(?:s|ing)?\s+in|returning for future episodes?)\b/i,
   originRevealCue:
     /\b(villain origin story|origin story|how (?:he|she|they) got (?:that|the) (?:scar|scars)|(?:scar|scars)\b.{0,20}\b(origin|backstory)|jumping off a cliff|fell off a cliff)\b/i,
 };
@@ -60,6 +63,51 @@ function isFigurativeKilledContext(text) {
   );
 }
 
+const SPORTS_EVENT_REGEX =
+  /\b(championship|(?:the )?finals|playoffs?|playoff game|super bowl|world series|stanley cup|march madness|nba|nfl|mlb|nhl|mls|ncaa|premier league|champions league|olympics|gold medal|regular season|all-star|mvp|draft night|game \d)\b/i;
+
+const SPORTS_TEAM_REGEX =
+  /\b(knicks|lakers|celtics|warriors|nets|bulls|heat|bucks|sixers|76ers|nuggets|suns|mavericks|mavs|rockets|spurs|clippers|timberwolves|grizzlies|pelicans|hawks|hornets|magic|pistons|pacers|cavaliers|cavs|raptors|wizards|thunder|blazers|kings|jazz|yankees|dodgers|red sox|mets|phillies|chiefs|eagles|cowboys|patriots|49ers|steelers|ravens|packers|lions|bills|dolphins)\b/i;
+
+const SPORTS_FRAMING_REGEX =
+  /\b(your team|my team|our team|won the game|lost the game|winning the championship|blowout|overtime|final score|point guard|quarterback|touchdown|home run)\b/i;
+
+/** Live sports / NBA-NFL commentary — not TV-plot discussion. */
+function isSportsCommentaryContext(text) {
+  const t = String(text || "");
+  if (!t) return false;
+  const hasEvent = SPORTS_EVENT_REGEX.test(t);
+  const hasTeam = SPORTS_TEAM_REGEX.test(t);
+  const hasFraming = SPORTS_FRAMING_REGEX.test(t);
+  return (hasEvent || hasTeam) && (hasEvent || hasFraming || hasTeam);
+}
+
+/** Hyperbolic fight talk ("kill each other") in sports trash-talk, not canon deaths. */
+function isColloquialInterpersonalViolence(text) {
+  const t = String(text || "");
+  return (
+    (/\b(kill(?:ing|s|ed)?|murder(?:ing|s|ed)?|fight(?:ing|s)?)\b/i.test(t) &&
+      /\b(each other|one another)\b/i.test(t)) ||
+    (/\bfighting\b/i.test(t) && /\btrying to kill\b/i.test(t))
+  );
+}
+
+function canHardAllowSportsCommentary(text, deathNameHitCount = 0) {
+  if (!isSportsCommentaryContext(text)) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(text)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(text)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(text)) return false;
+  if (hasOriginRevealCue(text)) return false;
+  if (
+    deathNameHitCount > 0 &&
+    /\b(dies|death of|killed off)\b/i.test(text) &&
+    !isColloquialInterpersonalViolence(text)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /** "return the robe / return it within an hour" — not narrative "character returns". */
 function isMerchandiseReturnContext(text) {
   return /\breturn(?:s|ing)?\s+(?:it|the|them|your|her|his|their|my)\b/i.test(String(text || ""));
@@ -76,6 +124,7 @@ function isCelebrityExposeTabloidContext(text) {
 
 function hasMajorSpoilerCue(text) {
   const t = String(text || "");
+  if (isSportsCommentaryContext(t)) return false;
   if (!SIGNAL_PATTERNS.majorSpoilerCues.test(t)) return false;
   if (isMerchandiseReturnContext(t) || isCelebrityExposeTabloidContext(t)) return false;
 
@@ -93,11 +142,37 @@ function hasMajorSpoilerCue(text) {
 }
 
 function hasDeathCueForSignals(text) {
-  return DEATH_CUE_REGEX.test(String(text || "")) && !isFigurativeKilledContext(text);
+  const t = String(text || "");
+  if (!DEATH_CUE_REGEX.test(t)) return false;
+  if (isFigurativeKilledContext(t)) return false;
+  if (isColloquialInterpersonalViolence(t)) return false;
+  if (isSportsCommentaryContext(t) && /\b(kill|murder|death|die|fighting)\b/i.test(t)) return false;
+  return true;
 }
 
 function hasOriginRevealCue(text) {
   return SIGNAL_PATTERNS.originRevealCue.test(String(text || ""));
+}
+
+/** Review/schedule/credits copy — skip LLM unless plot-shaped overrides are present. */
+function canHardAllowReviewMeta(text, deathNameHitCount = 0) {
+  const t = String(text || "");
+  const hasReviewMeta =
+    SIGNAL_PATTERNS.reviewMetaDiscussion.test(t) ||
+    (SIGNAL_PATTERNS.nonSpoilerContext.test(t) &&
+      /\b(directed by|written by|created by|airs?(?:\s+on|\s+every)?|finale review|episode review)\b/i.test(t));
+
+  if (!hasReviewMeta) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
+  if (hasOriginRevealCue(t)) return false;
+  if (hasDeathCueForSignals(t) && deathNameHitCount > 0) return false;
+  if (hasDeathCueForSignals(t) && /\b(dies|killed|murdered|death of|killed off)\b/i.test(t)) return false;
+  if (hasMajorSpoilerCue(t) && !/\b(review|reviews|recap|directed by|written by|airs?|reception|premiere)\b/i.test(t)) {
+    return false;
+  }
+  return true;
 }
 
 const HIGH_RISK_SECTION_REGEX = /\b(premise|plot|synopsis|story|characters?)\b/i;
@@ -291,9 +366,27 @@ function normalizeForMatch(value) {
     .trim();
 }
 
+/** Rumors, leaks, official promo, or rumored plot beats in unreleased media. */
 function hasFutureAppearanceInText(text) {
   const t = String(text || "");
   if (/\b(will|may|might|could|set to|expected to)\s+appear\b/i.test(t)) return true;
+  if (
+    /\b(first look|new look|official look|sneak peek|debut look|get (?:your )?first look|check out (?:the )?first look)\s+at\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  if (/\b(teaser|poster|still|promo|trailer|footage)\s+(?:shows?|features?|reveals?|debuts?)\b/i.test(t)) {
+    return true;
+  }
+  if (
+    /\b(apparently|supposedly|reportedly|rumou?red to|we'?ll have|we will have|looks like we'?ll)\b/i.test(t) &&
+    (/\bvs\.?\b|\bversus\b/i.test(t) ||
+      /\b(?:we'?ll have|we will have|features?|includes?|introduces?)\b/i.test(t))
+  ) {
+    return true;
+  }
   return /\bappear(?:s|ing)?\s+in\b/i.test(t) && SIGNAL_PATTERNS.speculativeLeak.test(t);
 }
 
@@ -1032,6 +1125,9 @@ async function runSemanticJudge(showName, showContext, textToAnalyze, precedingC
     "- DO flag: reveals that a specific character appears in an unaired or future season/episode,",
     "  even if framed as casting news, set reports, or speculation (e.g. 'spotted on set as X', 'seemingly returning as Y').",
     "  Knowing a character appears in a season the user hasn't watched yet IS a spoiler.",
+    "- DO flag: official promo that reveals character presence in unreleased media (e.g. 'first look at X in TITLE',",
+    "  teaser/poster/trailer stills showing a character). Official marketing still spoils who shows up.",
+    "- DO flag: rumored plot beats or matchups in unreleased media (e.g. 'apparently we'll have X vs Y in TITLE').",
     "- DO flag: rumor or leak posts that state a character will appear in upcoming media — even when the author",
     "  dismisses or debunks the rumor. Stating the rumor content still spoils it.",
     "- DO flag: crossover or guest-appearance rumors involving this title's characters in other upcoming films/shows.",
@@ -1130,8 +1226,17 @@ function computeDeterministicSignals({
     return Math.max(maxCount, count);
   }, 0);
   const isLikelyShowPage = matchedShows.some((showName) => looksLikeShowPage(pageUrl, showName));
-  const hasMajorCue = hasMajorSpoilerCue(text);
-  const hasOriginReveal = hasOriginRevealCue(text);
+  const deathNameHitCount = matchedShows.reduce((total, showName) => {
+    const deathNames = normalizeList(showContexts?.[showName]?.major_death_names);
+    const normalizedText = normalizeForMatch(text);
+    const hits = deathNames.filter((name) => normalizedText.includes(normalizeForMatch(name))).length;
+    return total + hits;
+  }, 0);
+  const reviewMetaHardAllow = canHardAllowReviewMeta(text, deathNameHitCount);
+  const sportsHardAllow = canHardAllowSportsCommentary(text, deathNameHitCount);
+  const suppressPlotCues = reviewMetaHardAllow || sportsHardAllow;
+  const hasMajorCue = suppressPlotCues ? false : hasMajorSpoilerCue(text);
+  const hasOriginReveal = suppressPlotCues ? false : hasOriginRevealCue(text);
   const hasRelationshipReveal = SIGNAL_PATTERNS.relationshipReveal.test(text);
   const hasTwistIdentity = SIGNAL_PATTERNS.twistIdentity.test(text);
   const hasDeathCue = hasDeathCueForSignals(text);
@@ -1141,12 +1246,6 @@ function computeDeterministicSignals({
   // "spotted on set, seemingly returning as X" reveals character presences and must go to LLM.
   const isSpeculativeLeak = SIGNAL_PATTERNS.speculativeLeak.test(text);
   const sectionRisk = getSectionRiskAdjustment(sectionHint);
-  const deathNameHitCount = matchedShows.reduce((total, showName) => {
-    const deathNames = normalizeList(showContexts?.[showName]?.major_death_names);
-    const normalizedText = normalizeForMatch(text);
-    const hits = deathNames.filter((name) => normalizedText.includes(normalizeForMatch(name))).length;
-    return total + hits;
-  }, 0);
 
   // Generic tier1 matches should contribute modestly by default.
   let riskScore = sectionRisk + Math.min(0.22, strongestTier1MatchCount * 0.05);
@@ -1169,6 +1268,22 @@ function computeDeterministicSignals({
       hardBlock: { matched: true, reason: "deterministic-relationship-reveal" },
       hardAllow: { matched: false, reason: "" },
       riskScore: Math.max(riskScore, 0.85),
+    };
+  }
+
+  if (reviewMetaHardAllow) {
+    return {
+      hardBlock: { matched: false, reason: "" },
+      hardAllow: { matched: true, reason: "deterministic-review-meta" },
+      riskScore: Math.min(riskScore, -0.65),
+    };
+  }
+
+  if (sportsHardAllow) {
+    return {
+      hardBlock: { matched: false, reason: "" },
+      hardAllow: { matched: true, reason: "deterministic-sports-commentary" },
+      riskScore: Math.min(riskScore, -0.65),
     };
   }
 
@@ -1211,22 +1326,22 @@ function computeDeterministicSignals({
     };
   }
 
-  // Future appearance rumors (e.g. "rumors Daredevil will appear in Spider-Man: Brand New Day").
+  // Unreleased character/plot presence — rumors, leaks, or official first-look promo.
   if (
     hasFutureAppearanceInText(text) &&
-    strongestTier1MatchCount >= 1 &&
+    (strongestTier1MatchCount >= 1 || protectedShowTitleInText(text, matchedShows)) &&
     !hasRelationshipReveal &&
     !hasTwistIdentity
   ) {
     return {
-      hardBlock: { matched: true, reason: "deterministic-future-appearance-rumor" },
+      hardBlock: { matched: true, reason: "deterministic-unreleased-character-reveal" },
       hardAllow: { matched: false, reason: "" },
       riskScore: Math.max(riskScore, 0.82),
     };
   }
 
   if (
-    isLikelyShowPage &&
+    (isLikelyShowPage || SIGNAL_PATTERNS.reviewMetaDiscussion.test(text)) &&
     looksLikeNonSpoilerContext &&
     !hasRelationshipReveal &&
     !hasTwistIdentity &&
@@ -1301,7 +1416,9 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
     const hasFutureAppearance = hasFutureAppearanceInText(normalized);
     const looksNonSpoiler =
       SIGNAL_PATTERNS.nonSpoilerContext.test(normalized) ||
-      SIGNAL_PATTERNS.castingAnnouncement.test(normalized);
+      SIGNAL_PATTERNS.castingAnnouncement.test(normalized) ||
+      SIGNAL_PATTERNS.reviewMetaDiscussion.test(normalized) ||
+      isSportsCommentaryContext(normalized);
 
     let maxMatchCount = 0;
     matchedShows.forEach((showName) => {
@@ -1348,9 +1465,23 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     };
   }
 
+  const precedingTrim = String(precedingContext || "").trim();
+  const tier0Scope = [precedingTrim, text].filter(Boolean).join("\n\n");
+
+  if (canHardAllowSportsCommentary(tier0Scope)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-sports-commentary",
+      matchedShow: "",
+      source: "tier0-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
+
   // Tier 1 + escalation scan: include preceding context so pronoun-only snippets
   // still inherit entity hits. The LLM still receives preceding separately.
-  const precedingTrim = String(precedingContext || "").trim();
   const tier1Scope = [precedingTrim, text].filter(Boolean).join("\n\n");
 
   const [local, sync] = await Promise.all([

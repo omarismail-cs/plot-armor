@@ -32,7 +32,7 @@ Current detector: `DETECTOR_VERSION` in `background.js` (cache keys include this
 
 ### Deterministic gates
 
-High-signal patterns can short-circuit to blur or hard-allow (e.g. relationship reveals, major spoiler cues with enough title context, speculative “leak” phrasing, narrow origin/injury reveal phrasing tied to a protected title). Logic lives in `computeDeterministicSignals` and related helpers in `background.js`.
+High-signal patterns can short-circuit to blur or hard-allow (e.g. relationship reveals, major spoiler cues with enough title context, speculative “leak” phrasing, narrow origin/injury reveal phrasing tied to a protected title). **Review/schedule meta** (`directed by`, `airs on Sunday`, `season finale review`, credits, air dates, etc.) hard-allows before the LLM when no plot-shaped overrides are present — including on Reddit/X, not only TMDB/Wikipedia show pages. **Sports commentary** (championship, finals, NBA/NFL teams, “your team”) hard-allows too; hyperbolic “kill each other” / “fighting” in that context is treated as trash-talk, not plot deaths. **Unreleased character reveals** (`first look at X in TITLE`, teaser/poster/trailer stills, leak/rumor phrasing, rumored matchups like `apparently we'll have X vs Y in TITLE`) hard-block when the protected title matches — official promo and soft rumor phrasing are treated the same as leaks for “who shows up” / “what happens” spoilers.
 
 ### Tier 2 — semantic judge
 

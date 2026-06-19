@@ -146,23 +146,21 @@ function injectStyles() {
       pointer-events: none;
     }
 
-    /* X/Twitter: do not rely on filter on <article> — video/GPU layers and
-       site CSS often leave media sharp. A full-bleed veil + backdrop-filter
-       obscures the card reliably. */
+    /* X/Twitter: full-bleed veil + backdrop-filter obscures media reliably. */
     .plot-armor-x-veil {
       position: absolute;
       inset: 0;
       z-index: 2147483645;
       pointer-events: none;
       border-radius: inherit;
-      background: rgba(9, 9, 11, 0.52);
-      backdrop-filter: blur(16px) saturate(0.82);
-      -webkit-backdrop-filter: blur(16px) saturate(0.82);
+      background: rgba(16, 12, 10, 0.58);
+      backdrop-filter: blur(14px) saturate(0.75) sepia(0.12);
+      -webkit-backdrop-filter: blur(14px) saturate(0.75) sepia(0.12);
     }
 
     .plot-armor-blur-wrapper {
-      filter: blur(7px) saturate(0.9) contrast(0.9);
-      opacity: 0.85;
+      filter: blur(7px) saturate(0.82) sepia(0.08);
+      opacity: 0.88;
       pointer-events: auto;
       user-select: none;
       cursor: pointer;
@@ -184,50 +182,75 @@ function injectStyles() {
       align-items: center;
       justify-content: center;
       gap: 8px;
-      padding: 7px 14px;
+      padding: 8px 14px 7px;
       width: max-content;
       max-width: 460px;
-      color: #fafafa;
-      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      color: #f3e7d6;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       font-size: 12px;
       font-weight: 500;
-      letter-spacing: -0.005em;
+      letter-spacing: -0.01em;
       line-height: 1.4;
       white-space: nowrap;
       text-transform: lowercase;
-      background: rgba(9, 9, 11, 0.92);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 999px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      background: rgba(16, 12, 10, 0.94);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid #2c231d;
+      border-radius: 8px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
       z-index: 2147483647;
       cursor: pointer;
       user-select: none;
       transform: translate(-50%, -50%);
-      transition: background 0.15s ease, border-color 0.15s ease;
+      transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .${OVERLAY_CLASS}::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(
+        90deg,
+        #ffc857 0%,
+        #ff9e3d 25%,
+        #ff7a4d 50%,
+        #ff5e7e 75%,
+        #d94f6c 100%
+      );
+      opacity: 0.85;
     }
 
     .${OVERLAY_CLASS}:hover {
-      background: rgba(15, 17, 23, 0.96);
-      border-color: rgba(255, 255, 255, 0.16);
+      background: rgba(28, 23, 20, 0.96);
+      border-color: rgba(255, 158, 61, 0.45);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 158, 61, 0.12);
     }
 
     .plot-armor-overlay-dot {
       width: 6px;
       height: 6px;
       border-radius: 999px;
-      background: #3b82f6;
-      box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+      background: #ff9e3d;
+      box-shadow: 0 0 8px rgba(255, 158, 61, 0.65);
       flex-shrink: 0;
     }
 
     .plot-armor-overlay-text {
-      color: #fafafa;
+      color: #f3e7d6;
     }
 
     .plot-armor-overlay-cta {
-      color: #a1a1aa;
+      color: #9a8775;
+      transition: color 0.15s ease;
+    }
+
+    .${OVERLAY_CLASS}:hover .plot-armor-overlay-cta {
+      color: #ff9e3d;
     }
 
     .plot-armor-report-btn {
@@ -236,18 +259,18 @@ function injectStyles() {
       gap: 6px;
       margin-left: 8px;
       padding: 3px 10px;
-      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       font-size: 11px;
       font-weight: 500;
-      letter-spacing: -0.005em;
+      letter-spacing: -0.01em;
       text-transform: lowercase;
-      color: #a1a1aa;
-      background: rgba(9, 9, 11, 0.85);
+      color: #9a8775;
+      background: rgba(16, 12, 10, 0.9);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(39, 39, 42, 0.9);
-      border-radius: 999px;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      border: 1px solid #2c231d;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
       cursor: pointer;
       z-index: 2147483647;
       pointer-events: auto;
@@ -262,36 +285,34 @@ function injectStyles() {
       height: 12px;
       display: block;
       flex-shrink: 0;
+      color: #ff9e3d;
     }
 
     .plot-armor-report-btn:hover {
-      color: #fafafa;
-      background: rgba(15, 17, 23, 0.92);
-      border-color: rgba(255, 255, 255, 0.16);
+      color: #f3e7d6;
+      background: rgba(28, 23, 20, 0.95);
+      border-color: rgba(255, 94, 126, 0.45);
     }
 
     .plot-armor-report-btn.reported {
-      color: #86efac;
-      border-color: rgba(34, 197, 94, 0.4);
-      background: rgba(14, 30, 20, 0.85);
+      color: #ff9e3d;
+      border-color: rgba(255, 158, 61, 0.4);
+      background: rgba(28, 23, 20, 0.92);
       pointer-events: none;
     }
 
-    /* Compact host-mode (X): icon-only, top-right of the article;
-       expands to icon + "not a spoiler?" on hover so it stops competing
-       with tweet content while staying discoverable. */
     .plot-armor-report-btn--host {
       position: absolute;
       top: 8px;
-      /* Overridden in JS from Grok button position when possible. */
       right: 88px;
       margin-left: 0;
       padding: 4px;
       gap: 0;
       max-width: 24px;
       overflow: hidden;
-      background: rgba(9, 9, 11, 0.55);
-      border-color: rgba(255, 255, 255, 0.08);
+      background: rgba(16, 12, 10, 0.72);
+      border-color: #2c231d;
+      border-radius: 8px;
     }
 
     .plot-armor-report-btn--host .plot-armor-report-btn-text {
@@ -308,6 +329,7 @@ function injectStyles() {
       padding: 4px 10px 4px 6px;
       gap: 6px;
       max-width: 200px;
+      border-color: rgba(255, 94, 126, 0.45);
     }
 
     .plot-armor-report-btn--host:hover .plot-armor-report-btn-text,

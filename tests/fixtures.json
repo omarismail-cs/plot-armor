@@ -327,5 +327,23 @@
     "text": "Production teams shared release windows and soundtrack details for upcoming episodes and tie-in media.",
     "expectedSpoiler": false,
     "sectionHint": "Production"
+  },
+  {
+    "id": "PA-051",
+    "protectedShows": ["The Last of Us", "Game of Thrones", "Succession"],
+    "text": "tf you supposed to be celebrating your team winning the championship but instead mf fighting and trying to kill each other. Hate to see if the Knicks would've lost in the finals",
+    "expectedSpoiler": false
+  },
+  {
+    "id": "PA-052",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "First look at The Hulk in 'SPIDER-MAN: BRAND NEW DAY'.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-053",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "Apparently, we'll have Punisher vs. The Hand in Spider-Man: Brand New Day.",
+    "expectedSpoiler": true
   }
 ]
