@@ -3,7 +3,7 @@ const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v15.4";
+const DETECTOR_VERSION = "v15.7";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -61,6 +61,71 @@ function isFigurativeKilledContext(text) {
       t
     )
   );
+}
+
+/** "first film to be shot for ScreenX" / "realistic shot at $2B" — not gun violence. */
+function isNonViolentShotContext(text) {
+  const t = String(text || "");
+  if (/\bfirst (?:film|movie|show|series|episode) to be shot\b/i.test(t)) return true;
+  if (/\b(?:be |being |was |were )?shot for\b/i.test(t)) return true;
+  if (/\bshot on (?:location|stage|a soundstage)\b/i.test(t)) return true;
+  if (/\b(?:filming|production|camera tests?)\b/i.test(t) && /\bshot\b/i.test(t)) return true;
+  if (/\b(?:realistic|legitimate|good|fair|decent|long|outside|slim)\s+shot at\b/i.test(t)) return true;
+  if (/\b(?:has|have|had)\s+a\s+(?:realistic|legitimate|good|fair|decent|long|outside|slim\s+)?shot at\b/i.test(t)) return true;
+  if (/\bshot at\s+\$?\d/i.test(t)) return true;
+  if (/\bshot at\s+(?:\d[\d,.]*\s+)?(?:billion|million)\b/i.test(t)) return true;
+  return false;
+}
+
+/** Box office / gross speculation — not plot. */
+function isBoxOfficeDiscussionContext(text) {
+  const t = String(text || "");
+  if (/\b(?:box office|worldwide gross|domestic gross|opening weekend|presales|ticket sales|theatrical run)\b/i.test(t)) {
+    return true;
+  }
+  if (/\b\d[\d,.]*\s*(?:billion|million)\s+worldwide\b/i.test(t)) return true;
+  if (/\$\d[\d,.]*\s*(?:billion|million)\b/i.test(t)) return true;
+  return isNonViolentShotContext(t) && /\b(?:billion|million|worldwide|gross|office)\b/i.test(t);
+}
+
+function canHardAllowBoxOfficeDiscussion(text, protectedShows) {
+  const t = String(text || "");
+  if (!isBoxOfficeDiscussionContext(t)) return false;
+  if (!protectedShowTitleInText(t, protectedShows)) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
+  if (hasOriginRevealCue(t)) return false;
+  if (scopeHasUnreleasedMediaReveal(t, "")) return false;
+  if (
+    /\b(dies|killed|murdered|death of|killed off|betray(?:ed|al)|twist|secret identity|first look|footage from|side[\s-]by[\s-]side)\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** ScreenX / IMAX / format & exhibition news — not plot. */
+function isExhibitionFormatProductionContext(text) {
+  return /\b(screenx|imax|dolby(?: cinema| vision| atmos)?|panavision|70mm|270[\s-]?degree|select sequences will expand|filmed for|first (?:film|movie) to be shot)\b/i.test(
+    String(text || "")
+  );
+}
+
+function canHardAllowProductionExhibition(text) {
+  const t = String(text || "");
+  if (!isExhibitionFormatProductionContext(t)) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
+  if (hasOriginRevealCue(t)) return false;
+  if (hasFutureAppearanceInText(t)) return false;
+  if (/\b(dies|killed|murdered|death of|killed off|betray(?:ed|al)|twist|secret identity)\b/i.test(t)) {
+    return false;
+  }
+  return true;
 }
 
 const SPORTS_EVENT_REGEX =
@@ -125,6 +190,7 @@ function isCelebrityExposeTabloidContext(text) {
 function hasMajorSpoilerCue(text) {
   const t = String(text || "");
   if (isSportsCommentaryContext(t)) return false;
+  if (isNonViolentShotContext(t)) return false;
   if (!SIGNAL_PATTERNS.majorSpoilerCues.test(t)) return false;
   if (isMerchandiseReturnContext(t) || isCelebrityExposeTabloidContext(t)) return false;
 
@@ -145,6 +211,7 @@ function hasDeathCueForSignals(text) {
   const t = String(text || "");
   if (!DEATH_CUE_REGEX.test(t)) return false;
   if (isFigurativeKilledContext(t)) return false;
+  if (isNonViolentShotContext(t)) return false;
   if (isColloquialInterpersonalViolence(t)) return false;
   if (isSportsCommentaryContext(t) && /\b(kill|murder|death|die|fighting)\b/i.test(t)) return false;
   return true;
@@ -366,7 +433,7 @@ function normalizeForMatch(value) {
     .trim();
 }
 
-/** Rumors, leaks, official promo, or rumored plot beats in unreleased media. */
+/** Rumors, leaks, official promo, footage analysis, or rumored plot beats in unreleased media. */
 function hasFutureAppearanceInText(text) {
   const t = String(text || "");
   if (/\b(will|may|might|could|set to|expected to)\s+appear\b/i.test(t)) return true;
@@ -380,6 +447,23 @@ function hasFutureAppearanceInText(text) {
   if (/\b(teaser|poster|still|promo|trailer|footage)\s+(?:shows?|features?|reveals?|debuts?)\b/i.test(t)) {
     return true;
   }
+  if (/\b(?:new|fresh|latest|leaked?|official|exclusive)\s+footage\b/i.test(t)) return true;
+  if (/\bfootage from\b/i.test(t)) return true;
+  if (/\bside[\s-]by[\s-]side comparison\b/i.test(t)) return true;
+  if (
+    /\b(?:looks?|looked|appearing)\s+(?:significantly|noticeably|much|very|considerably|different|bigger|smaller|taller|older|younger|updated)\b/i.test(
+      t
+    ) &&
+    /\bin\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (/\bvisual analysis\b/i.test(t) && /\b(?:footage|stills?|frame|scene|comparison|scaled up|film)\b/i.test(t)) {
+    return true;
+  }
+  if (/\bscaled up\b/i.test(t) && /\b(?:for this film|for the film|in the film|for this movie|for the movie)\b/i.test(t)) {
+    return true;
+  }
   if (
     /\b(apparently|supposedly|reportedly|rumou?red to|we'?ll have|we will have|looks like we'?ll)\b/i.test(t) &&
     (/\bvs\.?\b|\bversus\b/i.test(t) ||
@@ -388,6 +472,10 @@ function hasFutureAppearanceInText(text) {
     return true;
   }
   return /\bappear(?:s|ing)?\s+in\b/i.test(t) && SIGNAL_PATTERNS.speculativeLeak.test(t);
+}
+
+function scopeHasUnreleasedMediaReveal(snippetText, fullText = "") {
+  return hasFutureAppearanceInText(snippetText) || hasFutureAppearanceInText(fullText);
 }
 
 function protectedShowTitleInText(text, protectedShows) {
@@ -1128,6 +1216,8 @@ async function runSemanticJudge(showName, showContext, textToAnalyze, precedingC
     "- DO flag: official promo that reveals character presence in unreleased media (e.g. 'first look at X in TITLE',",
     "  teaser/poster/trailer stills showing a character). Official marketing still spoils who shows up.",
     "- DO flag: rumored plot beats or matchups in unreleased media (e.g. 'apparently we'll have X vs Y in TITLE').",
+    "- DO flag: unreleased footage analysis (e.g. 'new footage from TITLE', side-by-side comparisons,",
+    "  'X looks bigger in TITLE', visual breakdowns of promo stills). Confirms who appears and what was shown.",
     "- DO flag: rumor or leak posts that state a character will appear in upcoming media — even when the author",
     "  dismisses or debunks the rumor. Stating the rumor content still spoils it.",
     "- DO flag: crossover or guest-appearance rumors involving this title's characters in other upcoming films/shows.",
@@ -1215,6 +1305,7 @@ function isDeterministicNonFictionSnippet(text) {
 
 function computeDeterministicSignals({
   text,
+  fullText = "",
   pageUrl,
   sectionHint,
   matchedShows,
@@ -1287,6 +1378,22 @@ function computeDeterministicSignals({
     };
   }
 
+  if (canHardAllowProductionExhibition(text)) {
+    return {
+      hardBlock: { matched: false, reason: "" },
+      hardAllow: { matched: true, reason: "deterministic-production-exhibition" },
+      riskScore: Math.min(riskScore, -0.65),
+    };
+  }
+
+  if (canHardAllowBoxOfficeDiscussion(text, matchedShows)) {
+    return {
+      hardBlock: { matched: false, reason: "" },
+      hardAllow: { matched: true, reason: "deterministic-box-office" },
+      riskScore: Math.min(riskScore, -0.65),
+    };
+  }
+
   if (
     (hasMajorCue || hasTwistIdentity || hasOriginReveal) &&
     strongestTier1MatchCount >= 2 &&
@@ -1326,13 +1433,13 @@ function computeDeterministicSignals({
     };
   }
 
-  // Unreleased character/plot presence — rumors, leaks, or official first-look promo.
-  if (
-    hasFutureAppearanceInText(text) &&
-    (strongestTier1MatchCount >= 1 || protectedShowTitleInText(text, matchedShows)) &&
-    !hasRelationshipReveal &&
-    !hasTwistIdentity
-  ) {
+  // Unreleased character/plot presence — rumors, leaks, promo, or footage analysis.
+  const unreleasedMediaReveal = scopeHasUnreleasedMediaReveal(text, fullText);
+  const titleAnchored =
+    strongestTier1MatchCount >= 1 ||
+    protectedShowTitleInText(text, matchedShows) ||
+    protectedShowTitleInText(fullText, matchedShows);
+  if (unreleasedMediaReveal && titleAnchored && !hasRelationshipReveal && !hasTwistIdentity) {
     return {
       hardBlock: { matched: true, reason: "deterministic-unreleased-character-reveal" },
       hardAllow: { matched: false, reason: "" },
@@ -1397,7 +1504,7 @@ function splitIntoSnippets(text) {
   return String(text || "")
     .split(/(?<=[.!?])\s+(?=[A-Z0-9"'])/)
     .map((part) => part.trim())
-    .filter((part) => part.length >= 60);
+    .filter((part) => part.length >= 60 || hasFutureAppearanceInText(part));
 }
 
 function pickBestEvaluationText(text, matchedShows, showContexts) {
@@ -1418,7 +1525,9 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
       SIGNAL_PATTERNS.nonSpoilerContext.test(normalized) ||
       SIGNAL_PATTERNS.castingAnnouncement.test(normalized) ||
       SIGNAL_PATTERNS.reviewMetaDiscussion.test(normalized) ||
-      isSportsCommentaryContext(normalized);
+      isSportsCommentaryContext(normalized) ||
+      isExhibitionFormatProductionContext(normalized) ||
+      isBoxOfficeDiscussionContext(normalized);
 
     let maxMatchCount = 0;
     matchedShows.forEach((showName) => {
@@ -1480,6 +1589,18 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     };
   }
 
+  if (canHardAllowProductionExhibition(tier0Scope)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-production-exhibition",
+      matchedShow: "",
+      source: "tier0-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
+
   // Tier 1 + escalation scan: include preceding context so pronoun-only snippets
   // still inherit entity hits. The LLM still receives preceding separately.
   const tier1Scope = [precedingTrim, text].filter(Boolean).join("\n\n");
@@ -1512,6 +1633,18 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     protectedShows: protectedShows.length,
     matchedShows,
   });
+
+  if (canHardAllowBoxOfficeDiscussion(text, protectedShows)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-box-office",
+      matchedShow: "",
+      source: "tier1-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
 
   // No Tier 1 match: on real pages, only escalate for self-labelled spoilers or
   // speculative-leak phrasing (v14.4+) — generic "killed/shooting" must not fan out to
@@ -1551,6 +1684,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
 
   const signals = computeDeterministicSignals({
     text: evaluationText,
+    fullText: text,
     pageUrl,
     sectionHint,
     matchedShows,

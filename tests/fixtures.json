@@ -345,5 +345,23 @@
     "protectedShows": ["Spider-Man: Brand New Day"],
     "text": "Apparently, we'll have Punisher vs. The Hand in Spider-Man: Brand New Day.",
     "expectedSpoiler": true
+  },
+  {
+    "id": "PA-054",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "SPIDER-MAN: BRAND NEW DAY is the first film to be shot for ScreenX! Select sequences will expand to a 270-degree image across three screens.",
+    "expectedSpoiler": false
+  },
+  {
+    "id": "PA-055",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "Hulk Looks Significantly Bigger in Spider-Man: Brand New Day. A side-by-side comparison between Avengers: Age of Ultron and Spider-Man: Brand New Day reveals a noticeable difference in Hulk's size. In Age of Ultron, Black Widow (around 5'7\") stood next to Hulk and reached approximately up to his waist. However, in the new footage from Brand New Day, Spider-Man (Tom Holland, ~5'8\") stands in front of Hulk and reaches his knee level. This visual analysis suggests that Hulk has been scaled up considerably for this film.",
+    "expectedSpoiler": true
+  },
+  {
+    "id": "PA-056",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "Do you think Spider-Man: Brand New Day has a realistic shot at $2 billion worldwide?",
+    "expectedSpoiler": false
   }
 ]

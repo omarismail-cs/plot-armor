@@ -4,12 +4,16 @@ Chrome extension that blurs likely spoilers while you browse. It combines local 
 
 ## Tech stack
 
-- Chrome Extension (Manifest V3)
-- JavaScript
-- OpenAI Chat Completions API
-- TMDB API
-- Chrome Storage API (`sync` + `local`)
-- `MutationObserver` + `IntersectionObserver`
+<p align="left">
+  <img src="https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black" alt="JavaScript" />
+  <img src="https://img.shields.io/badge/Chrome_Extension-Manifest_V3-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Chrome Extension (Manifest V3)" />
+  <img src="https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI" />
+  <img src="https://img.shields.io/badge/TMDB-01b4e4?style=for-the-badge&logo=themoviedatabase&logoColor=white" alt="TMDB" />
+  <img src="https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white" alt="HTML5" />
+  <img src="https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white" alt="CSS3" />
+</p>
+
+Also uses Chrome Storage API, `MutationObserver`, and `IntersectionObserver` for on-page scanning.
 
 ## Demo
 
