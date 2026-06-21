@@ -1,0 +1,4 @@
+# Supabase local/dev config. Deploy uses CLI flags + dashboard project settings.
+
+[functions.ingest-false-positive]
+verify_jwt = false

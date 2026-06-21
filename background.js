@@ -1,9 +1,23 @@
 const SHOW_CONTEXTS_KEY = "showContexts";
 const EVAL_CACHE_KEY = "evalCache";
 const LOG_PREFIX = "[Plot Armor background]";
+const DEBUG = false;
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v15.7";
+const DETECTOR_VERSION = "v15.10";
+
+// --- False-positive feedback (Chrome Web Store) ---
+// 1) Deploy supabase/ (see supabase/README.md)
+// 2) Set URL to: https://<project-ref>.supabase.co/functions/v1/ingest-false-positive
+// 3) Set INGEST_KEY to the same value as Supabase secret PLOT_ARMOR_INGEST_SECRET
+const FALSE_POSITIVE_INGEST_URL =
+  "https://cezsqhodmuvwmhvsjpdn.supabase.co/functions/v1/ingest-false-positive";
+const FALSE_POSITIVE_INGEST_KEY = "sgGvpA0aqhfr1gxm6+IfzUUu7qsB08drfycp8s8REQs="; // same string as PLOT_ARMOR_INGEST_SECRET (set after supabase secrets set)
+
+// Keep local copies for the options-page list AND post to Supabase ingest when configured.
+const KEEP_LOCAL_FALSE_POSITIVE_COPIES = true;
+
+const FALSE_POSITIVES_KEY = "false_positives";
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -109,7 +123,7 @@ function canHardAllowBoxOfficeDiscussion(text, protectedShows) {
 
 /** ScreenX / IMAX / format & exhibition news — not plot. */
 function isExhibitionFormatProductionContext(text) {
-  return /\b(screenx|imax|dolby(?: cinema| vision| atmos)?|panavision|70mm|270[\s-]?degree|select sequences will expand|filmed for|first (?:film|movie) to be shot)\b/i.test(
+  return /\b(screen\s*x|screenx|imax|dolby(?: cinema| vision| atmos)?|panavision|70mm|270[\s-]?degree|select sequences will expand|filmed for|first (?:film|movie) to be shot|official\s+(?:screen\s*x\s+)?trailer)\b/i.test(
     String(text || "")
   );
 }
@@ -157,6 +171,88 @@ function isColloquialInterpersonalViolence(text) {
   );
 }
 
+/** MMO / gaming server chatter — not TV plot. */
+function isGamingMmoContext(text) {
+  const t = String(text || "").toLowerCase();
+  return (
+    /\b(world of warcraft|warcraft|wow|mmo|deepseek|bot[\s-]?based|gaming server)\b/.test(t) &&
+    /\b(dungeon|level up|characters?|server|players?|bots?)\b/.test(t)
+  );
+}
+
+/** Job-training anxiety ("worried about forgetting during training") — not plot. */
+function isForgetfulTrainingContext(text) {
+  const t = String(text || "");
+  return (
+    /\bforgetting\b/i.test(t) &&
+    /\b(training|memorize|onboarding|learn|stuff during|new job|first job|retail)\b/i.test(t)
+  );
+}
+
+/** Retail / first-job advice threads — unrelated to shielded titles. */
+function isCareerAdviceContext(text) {
+  const t = String(text || "").toLowerCase();
+  const hits = [
+    /\b(first job|first retail|retail job|got hired|new job|job ever|any advice)\b/.test(t),
+    /\b(training|memorize|coworker|manager|shift|onboarding|notebook)\b/.test(t),
+    /\br\/askretail\b/.test(t),
+  ].filter(Boolean).length;
+  return hits >= 2;
+}
+
+function canHardAllowCareerAdvice(text, protectedShows) {
+  const t = String(text || "");
+  if (!isCareerAdviceContext(t)) return false;
+  if (protectedShowTitleInText(t, protectedShows)) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
+  if (hasOriginRevealCue(t)) return false;
+  if (scopeHasUnreleasedMediaReveal(t, "")) return false;
+  return true;
+}
+
+/** Official trailer / format promo without plot beats. */
+function canHardAllowPromoTrailer(text, protectedShows) {
+  const t = String(text || "");
+  const isTrailerPromo =
+    /\bofficial\s+(?:screen\s*x\s+)?trailer\b/i.test(t) ||
+    /\b(?:screen\s*x|screenx|imax|dolby(?: cinema| atmos)?)\s+trailer\b/i.test(t) ||
+    (/\b(?:teaser|trailer)\b/i.test(t) &&
+      /\b(?:official|premiere|drops?|debut|in theaters|coming soon)\b/i.test(t) &&
+      !/\b(dies|killed|death of|twist|ending|finale|reveals? that)\b/i.test(t));
+  if (!isTrailerPromo) return false;
+  if (!protectedShowTitleInText(t, protectedShows)) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
+  if (hasOriginRevealCue(t)) return false;
+  if (scopeHasUnreleasedMediaReveal(t, "")) return false;
+  if (/\b(first look|footage from|side[\s-]by[\s-]side|vs\.?|versus|apparently)\b/i.test(t)) return false;
+  return true;
+}
+
+function hasStrongTier1Anchor(tier1ByShow, matchedShows) {
+  return matchedShows.some((showName) => {
+    const terms = tier1ByShow?.[showName]?.matchedTerms || [];
+    return terms.some((term) => {
+      const t = String(term || "").trim();
+      return t.includes(" ") && t.length >= 8;
+    });
+  });
+}
+
+function canHardAllowGamingMmoPost(text, protectedShows) {
+  const t = String(text || "");
+  if (!isGamingMmoContext(t)) return false;
+  if (protectedShowTitleInText(t, protectedShows)) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
+  if (hasOriginRevealCue(t)) return false;
+  return true;
+}
+
 function canHardAllowSportsCommentary(text, deathNameHitCount = 0) {
   if (!isSportsCommentaryContext(text)) return false;
   if (SIGNAL_PATTERNS.relationshipReveal.test(text)) return false;
@@ -171,6 +267,50 @@ function canHardAllowSportsCommentary(text, deathNameHitCount = 0) {
     return false;
   }
   return true;
+}
+
+/** "Forget about the dad's idea" — not plot forgetting / memory beats. */
+function isForgetAboutColloquialContext(text) {
+  return /\bforget about\b/i.test(String(text || ""));
+}
+
+/** Studio rights / Sony-Spidey contract chatter — industry meta, not Born Again plot. */
+function isFranchiseBusinessMetaContext(text) {
+  const t = String(text || "").toLowerCase();
+  if (/\b(contract with sony|spidey contract|sony deal|studio deal|licensing deal|distribution deal)\b/.test(t)) {
+    return true;
+  }
+  if (/\b(mcu|marvel|sony|disney)\b/.test(t) && /\b(contract|deal|rights|written into)\b/.test(t)) {
+    return true;
+  }
+  if (
+    /\bcharacters?\b/.test(t) &&
+    /\bappear in the movies\b/.test(t) &&
+    /\b(contract|sony|mcu|marvel|made that up)\b/.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function canHardAllowFranchiseBusinessMeta(text) {
+  return isFranchiseBusinessMetaContext(String(text || ""));
+}
+
+/** "as it turns out" in casual speech — not a plot twist. */
+function isColloquialTurnsOutContext(text) {
+  const t = String(text || "");
+  if (/\bas it turns out\b/i.test(t)) return true;
+  if (/\bturns out (?:it|i|we|they|the|that|this|you|he|she)\b/i.test(t)) return true;
+  if (/\bturns out[,]?\s+(?:very|pretty|not|hard|easy|simple|true|false|wrong|right|i)\b/i.test(t)) return true;
+  return false;
+}
+
+/** "dead simple" etc. — not character death. */
+function isDeadColloquialContext(text) {
+  return /\bdead (?:simple|easy|wrong|right|serious|quiet|last|center|middle|end|on|set|beat|tired|broke|pan|honest|straight|calm)\b/i.test(
+    String(text || "")
+  );
 }
 
 /** "return the robe / return it within an hour" — not narrative "character returns". */
@@ -190,9 +330,18 @@ function isCelebrityExposeTabloidContext(text) {
 function hasMajorSpoilerCue(text) {
   const t = String(text || "");
   if (isSportsCommentaryContext(t)) return false;
+  if (isGamingMmoContext(t) && isColloquialInterpersonalViolence(t)) return false;
+  if (isGamingMmoContext(t) && /\bfight(?:s|ing)?\b/i.test(t) && !/\b(dies|death of|killed off|murdered)\b/i.test(t)) {
+    return false;
+  }
   if (isNonViolentShotContext(t)) return false;
   if (!SIGNAL_PATTERNS.majorSpoilerCues.test(t)) return false;
+  if (isForgetAboutColloquialContext(t)) return false;
   if (isMerchandiseReturnContext(t) || isCelebrityExposeTabloidContext(t)) return false;
+  if (/\bturns out\b/i.test(t) && isColloquialTurnsOutContext(t)) return false;
+  if (/\bdead\b/i.test(t) && isDeadColloquialContext(t)) return false;
+  if (/\bforgetting\b/i.test(t) && isForgetfulTrainingContext(t)) return false;
+  if (isColloquialInterpersonalViolence(t)) return false;
 
   // Bare "reveals/revealed/revealing" is too broad in social/news context and
   // caused hard-block false positives (e.g. finance/sports posts).
@@ -416,6 +565,51 @@ function normalizeUnknownError(error) {
   return { message: String(error), stack: "", name: typeof error };
 }
 
+function debugLog(message, payload) {
+  if (!DEBUG) return;
+  if (payload !== undefined) console.info(message, payload);
+  else console.info(message);
+}
+
+async function ingestFalsePositiveReport(report) {
+  const url = String(FALSE_POSITIVE_INGEST_URL || "").trim();
+  if (!url) return false;
+
+  const headers = { "Content-Type": "application/json" };
+  const ingestKey = String(FALSE_POSITIVE_INGEST_KEY || "").trim();
+  if (ingestKey) {
+    headers["x-plot-armor-ingest-key"] = ingestKey;
+  }
+
+  let extensionVersion = "";
+  try {
+    extensionVersion = chrome.runtime.getManifest()?.version || "";
+  } catch (_) {
+    extensionVersion = "";
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        report: {
+          ...report,
+          extensionVersion,
+        },
+      }),
+    });
+    if (!response.ok) {
+      console.warn(`${LOG_PREFIX} false positive ingest HTTP ${response.status}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} false positive ingest failed`, normalizeUnknownError(error));
+    return false;
+  }
+}
+
 function hashText(inputText) {
   let hash = 5381;
   const input = String(inputText || "");
@@ -436,6 +630,7 @@ function normalizeForMatch(value) {
 /** Rumors, leaks, official promo, footage analysis, or rumored plot beats in unreleased media. */
 function hasFutureAppearanceInText(text) {
   const t = String(text || "");
+  if (isFranchiseBusinessMetaContext(t)) return false;
   if (/\b(will|may|might|could|set to|expected to)\s+appear\b/i.test(t)) return true;
   if (
     /\b(first look|new look|official look|sneak peek|debut look|get (?:your )?first look|check out (?:the )?first look)\s+at\b/i.test(
@@ -476,6 +671,33 @@ function hasFutureAppearanceInText(text) {
 
 function scopeHasUnreleasedMediaReveal(snippetText, fullText = "") {
   return hasFutureAppearanceInText(snippetText) || hasFutureAppearanceInText(fullText);
+}
+
+/** Coding, journaling apps, career posts — unrelated to shielded titles. */
+function isUnrelatedPersonalContext(text) {
+  const t = String(text || "").toLowerCase();
+  const hits = [
+    /\b(?:coding|programming|learn(?:ed|ing)? to code|taught myself to code|zero coding)\b/.test(t),
+    /\b(?:kotlin|javascript|typescript|python|swift|react native|android app|ios app)\b/.test(t),
+    /\bbuilt an? (?:app|android|ios)\b/.test(t),
+    /\bjournaling app\b/.test(t),
+    /\b(?:side project|portfolio project|pet project)\b/.test(t),
+    /\bself[\s-]?improvement\b/.test(t),
+  ].filter(Boolean).length;
+  return hits >= 2;
+}
+
+function canHardAllowUnrelatedPersonalPost(text, protectedShows) {
+  const t = String(text || "");
+  if (!isUnrelatedPersonalContext(t)) return false;
+  if (protectedShowTitleInText(t, protectedShows)) return false;
+  if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
+  if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
+  if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
+  if (hasOriginRevealCue(t)) return false;
+  if (scopeHasUnreleasedMediaReveal(t, "")) return false;
+  if (/\b(spoilers?|killed off|dies|death of|plot twist|season finale)\b/i.test(t)) return false;
+  return true;
 }
 
 function protectedShowTitleInText(text, protectedShows) {
@@ -1019,7 +1241,7 @@ Return a JSON object with exactly these keys:
 }
 
 async function handleShowAdded(showName, _tmdbSelection = null) {
-  console.info(`${LOG_PREFIX} SHOW_ADDED received`, { showName });
+  debugLog(`${LOG_PREFIX} SHOW_ADDED received`, { showName });
   const local = await chrome.storage.local.get([SHOW_CONTEXTS_KEY]);
   const showContexts = local[SHOW_CONTEXTS_KEY] || {};
   let context;
@@ -1038,13 +1260,13 @@ async function handleShowAdded(showName, _tmdbSelection = null) {
       // Multi-season TV: one focused LLM call per season, then merge.
       // Cap at 5 seasons to limit API cost (covers the vast majority of shows).
       const cappedSeasons = seasons.slice(0, 5);
-      console.info(`${LOG_PREFIX} Per-season story graph`, { showName, seasons: cappedSeasons });
+      debugLog(`${LOG_PREFIX} Per-season story graph`, { showName, seasons: cappedSeasons });
 
       // Fetch Wikipedia episode summaries for each season in parallel with each other.
       const wikiResults = await Promise.all(
         cappedSeasons.map((n) => fetchWikipediaEpisodes(showName, n).catch(() => null))
       );
-      console.info(`${LOG_PREFIX} Wikipedia episodes fetched`, {
+      debugLog(`${LOG_PREFIX} Wikipedia episodes fetched`, {
         showName,
         found: wikiResults.filter(Boolean).length,
         total: cappedSeasons.length,
@@ -1062,7 +1284,7 @@ async function handleShowAdded(showName, _tmdbSelection = null) {
     } else {
       // Single-season show or movie.
       const wikiEpisodes = await fetchWikipediaEpisodes(showName).catch(() => null);
-      console.info(`${LOG_PREFIX} Wikipedia episodes fetched`, {
+      debugLog(`${LOG_PREFIX} Wikipedia episodes fetched`, {
         showName,
         found: Boolean(wikiEpisodes),
       });
@@ -1082,7 +1304,7 @@ async function handleShowAdded(showName, _tmdbSelection = null) {
     showContexts[showName].tmdb_actor_names = tmdbContext.actorNames || [];
   }
   await chrome.storage.local.set({ [SHOW_CONTEXTS_KEY]: showContexts });
-  console.info(`${LOG_PREFIX} SHOW_ADDED stored story graph`, {
+  debugLog(`${LOG_PREFIX} SHOW_ADDED stored story graph`, {
     showName,
     key_characters: context.key_characters.length,
     character_deaths: context.character_deaths.length,
@@ -1097,12 +1319,12 @@ async function handleShowAdded(showName, _tmdbSelection = null) {
 }
 
 async function handleShowRemoved(showName) {
-  console.info(`${LOG_PREFIX} SHOW_REMOVED received`, { showName });
+  debugLog(`${LOG_PREFIX} SHOW_REMOVED received`, { showName });
   const local = await chrome.storage.local.get([SHOW_CONTEXTS_KEY]);
   const showContexts = local[SHOW_CONTEXTS_KEY] || {};
   delete showContexts[showName];
   await chrome.storage.local.set({ [SHOW_CONTEXTS_KEY]: showContexts });
-  console.info(`${LOG_PREFIX} SHOW_REMOVED stored context update`, {
+  debugLog(`${LOG_PREFIX} SHOW_REMOVED stored context update`, {
     showName,
     remainingShows: Object.keys(showContexts).length,
   });
@@ -1160,7 +1382,7 @@ function tier1AnalyzeShow(textToAnalyze, showContext, showName = "") {
   const uniqueTerms = [...new Set(matchedTerms)];
 
   if (matchedTerms.length) {
-    console.info(`${LOG_PREFIX} Tier1 matched terms`, {
+    debugLog(`${LOG_PREFIX} Tier1 matched terms`, {
       sample: matchedTerms.slice(0, 5),
       total: matchedTerms.length,
     });
@@ -1198,8 +1420,10 @@ async function runSemanticJudge(showName, showContext, textToAnalyze, precedingC
     "  yourself to only flagging events that appear in it.",
     "- DO NOT flag: acting reviews, casting news, release dates, production info, genre commentary,",
     "  fan theories that contain no confirmed plot information, behind-the-scenes discussion,",
-    "  real-world news events, career or life advice, or any text that has no specific connection",
+    "  real-world news events, career or life advice, gaming/MMO news, or any text that has no specific connection",
     "  to on-screen events of this title.",
+    "- DO NOT flag: official trailer / ScreenX / IMAX / teaser posts that only announce marketing assets",
+    "  without naming unreleased plot beats, matchups, or character appearances beyond the title.",
     "- VERY IMPORTANT: if the text does not contain specific named characters, plot events, or",
     "  direct story information from this title, respond with isSpoiler:false and confidence≤0.25.",
     "  Vague thematic overlap (e.g. mentions of 'leaving', 'fighting', 'shooting' in a real-world",
@@ -1243,7 +1467,7 @@ async function runSemanticJudge(showName, showContext, textToAnalyze, precedingC
   );
 
   const jsonCandidate = stripToJsonObject(raw);
-  console.info(`${LOG_PREFIX} runSemanticJudge raw`, { showName, raw });
+  debugLog(`${LOG_PREFIX} runSemanticJudge raw`, { showName, raw });
   try {
     const parsed = JSON.parse(jsonCandidate);
     const confidence = Number(parsed?.confidence);
@@ -1269,6 +1493,22 @@ function getSectionRiskAdjustment(sectionHint = "") {
   if (HIGH_RISK_SECTION_REGEX.test(section)) return 0.15;
   if (LOW_RISK_SECTION_REGEX.test(section)) return -0.18;
   return 0;
+}
+
+function makeDeterministicHardAllow(reason, riskScore, cap = -0.65) {
+  return {
+    hardBlock: { matched: false, reason: "" },
+    hardAllow: { matched: true, reason },
+    riskScore: Math.min(riskScore, cap),
+  };
+}
+
+function makeDeterministicHardBlock(reason, riskScore, floor = 0.75) {
+  return {
+    hardBlock: { matched: true, reason },
+    hardAllow: { matched: false, reason: "" },
+    riskScore: Math.max(riskScore, floor),
+  };
 }
 
 /** Same tweet text should share evalCache on X whether the URL is /home, /status/…, or /search. */
@@ -1309,6 +1549,7 @@ function computeDeterministicSignals({
   pageUrl,
   sectionHint,
   matchedShows,
+  protectedShows = matchedShows,
   tier1ByShow,
   showContexts,
 }) {
@@ -1355,64 +1596,59 @@ function computeDeterministicSignals({
   if (looksLikeCastingAnnouncement) riskScore -= 0.2;
 
   if (hasRelationshipReveal && strongestTier1MatchCount >= 1) {
-    return {
-      hardBlock: { matched: true, reason: "deterministic-relationship-reveal" },
-      hardAllow: { matched: false, reason: "" },
-      riskScore: Math.max(riskScore, 0.85),
-    };
+    return makeDeterministicHardBlock("deterministic-relationship-reveal", riskScore, 0.85);
   }
 
   if (reviewMetaHardAllow) {
-    return {
-      hardBlock: { matched: false, reason: "" },
-      hardAllow: { matched: true, reason: "deterministic-review-meta" },
-      riskScore: Math.min(riskScore, -0.65),
-    };
+    return makeDeterministicHardAllow("deterministic-review-meta", riskScore);
   }
 
   if (sportsHardAllow) {
-    return {
-      hardBlock: { matched: false, reason: "" },
-      hardAllow: { matched: true, reason: "deterministic-sports-commentary" },
-      riskScore: Math.min(riskScore, -0.65),
-    };
+    return makeDeterministicHardAllow("deterministic-sports-commentary", riskScore);
   }
 
   if (canHardAllowProductionExhibition(text)) {
-    return {
-      hardBlock: { matched: false, reason: "" },
-      hardAllow: { matched: true, reason: "deterministic-production-exhibition" },
-      riskScore: Math.min(riskScore, -0.65),
-    };
+    return makeDeterministicHardAllow("deterministic-production-exhibition", riskScore);
   }
 
-  if (canHardAllowBoxOfficeDiscussion(text, matchedShows)) {
-    return {
-      hardBlock: { matched: false, reason: "" },
-      hardAllow: { matched: true, reason: "deterministic-box-office" },
-      riskScore: Math.min(riskScore, -0.65),
-    };
+  if (canHardAllowBoxOfficeDiscussion(text, protectedShows)) {
+    return makeDeterministicHardAllow("deterministic-box-office", riskScore);
   }
+
+  if (canHardAllowUnrelatedPersonalPost(text, protectedShows)) {
+    return makeDeterministicHardAllow("deterministic-unrelated-personal", riskScore);
+  }
+
+  if (canHardAllowCareerAdvice(text, protectedShows)) {
+    return makeDeterministicHardAllow("deterministic-career-advice", riskScore);
+  }
+
+  if (canHardAllowGamingMmoPost(text, protectedShows)) {
+    return makeDeterministicHardAllow("deterministic-gaming-mmo", riskScore);
+  }
+
+  if (canHardAllowPromoTrailer(text, protectedShows)) {
+    return makeDeterministicHardAllow("deterministic-promo-trailer", riskScore);
+  }
+
+  const titleAnchoredForHardBlock =
+    protectedShowTitleInText(text, matchedShows) ||
+    protectedShowTitleInText(fullText, matchedShows) ||
+    hasStrongTier1Anchor(tier1ByShow, matchedShows) ||
+    deathNameHitCount > 0;
 
   if (
     (hasMajorCue || hasTwistIdentity || hasOriginReveal) &&
     strongestTier1MatchCount >= 2 &&
+    titleAnchoredForHardBlock &&
     !looksLikeCastingAnnouncement &&
     !looksLikeNonSpoilerContext
   ) {
-    return {
-      hardBlock: { matched: true, reason: "deterministic-major-cue" },
-      hardAllow: { matched: false, reason: "" },
-      riskScore: Math.max(riskScore, 0.75),
-    };
+    return makeDeterministicHardBlock("deterministic-major-cue", riskScore, 0.75);
   }
 
   if (hasOriginReveal && strongestTier1MatchCount >= 1 && !looksLikeCastingAnnouncement && !looksLikeNonSpoilerContext) {
-    return {
-      hardBlock: { matched: true, reason: "deterministic-origin-reveal-cue" },
-      hardAllow: { matched: false, reason: "" },
-      riskScore: Math.max(riskScore, 0.72),
-    };
+    return makeDeterministicHardBlock("deterministic-origin-reveal-cue", riskScore, 0.72);
   }
 
   // *Silicon Valley*: LLMs often misread "rival repeatedly tries to acquire the startup"
@@ -1426,25 +1662,20 @@ function computeDeterministicSignals({
     siliconValleyAcquisitionArc &&
     matchedShows.some((showName) => normalizeForMatch(showName).includes("silicon valley"))
   ) {
-    return {
-      hardBlock: { matched: true, reason: "deterministic-silicon-valley-acquisition-arc" },
-      hardAllow: { matched: false, reason: "" },
-      riskScore: Math.max(riskScore, 0.8),
-    };
+    return makeDeterministicHardBlock("deterministic-silicon-valley-acquisition-arc", riskScore, 0.8);
   }
 
   // Unreleased character/plot presence — rumors, leaks, promo, or footage analysis.
   const unreleasedMediaReveal = scopeHasUnreleasedMediaReveal(text, fullText);
   const titleAnchored =
-    strongestTier1MatchCount >= 1 ||
     protectedShowTitleInText(text, matchedShows) ||
-    protectedShowTitleInText(fullText, matchedShows);
+    protectedShowTitleInText(fullText, matchedShows) ||
+    hasStrongTier1Anchor(tier1ByShow, matchedShows);
+  if (canHardAllowFranchiseBusinessMeta(text) || canHardAllowFranchiseBusinessMeta(fullText)) {
+    return makeDeterministicHardAllow("deterministic-franchise-business-meta", riskScore);
+  }
   if (unreleasedMediaReveal && titleAnchored && !hasRelationshipReveal && !hasTwistIdentity) {
-    return {
-      hardBlock: { matched: true, reason: "deterministic-unreleased-character-reveal" },
-      hardAllow: { matched: false, reason: "" },
-      riskScore: Math.max(riskScore, 0.82),
-    };
+    return makeDeterministicHardBlock("deterministic-unreleased-character-reveal", riskScore, 0.82);
   }
 
   if (
@@ -1454,21 +1685,13 @@ function computeDeterministicSignals({
     !hasTwistIdentity &&
     !isSpeculativeLeak
   ) {
-    return {
-      hardBlock: { matched: false, reason: "" },
-      hardAllow: { matched: true, reason: "deterministic-nonspoiler-context" },
-      riskScore: Math.min(riskScore, -0.6),
-    };
+    return makeDeterministicHardAllow("deterministic-nonspoiler-context", riskScore, -0.6);
   }
 
   // Casting/production context: must not be speculative/leak language.
   // "spotted on set, seemingly returning as X" goes to LLM, not hard-allowed.
   if (looksLikeCastingAnnouncement && !hasRelationshipReveal && !hasTwistIdentity && !isSpeculativeLeak) {
-    return {
-      hardBlock: { matched: false, reason: "" },
-      hardAllow: { matched: true, reason: "deterministic-casting-context" },
-      riskScore: Math.min(riskScore, -0.6),
-    };
+    return makeDeterministicHardAllow("deterministic-casting-context", riskScore, -0.6);
   }
 
   // Section-level hard-allow: if the nearest heading is clearly non-plot
@@ -1481,11 +1704,7 @@ function computeDeterministicSignals({
     !hasTwistIdentity &&
     !isSpeculativeLeak
   ) {
-    return {
-      hardBlock: { matched: false, reason: "" },
-      hardAllow: { matched: true, reason: "deterministic-low-risk-section" },
-      riskScore: Math.min(riskScore, -0.7),
-    };
+    return makeDeterministicHardAllow("deterministic-low-risk-section", riskScore, -0.7);
   }
 
   return {
@@ -1558,7 +1777,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   const originalText = String(textToAnalyze || "").trim();
   const text = originalText;
   if (!text) {
-    console.info(`${LOG_PREFIX} SEMANTIC_CHECK skipped empty text`);
+    debugLog(`${LOG_PREFIX} SEMANTIC_CHECK skipped empty text`);
     return { isSpoiler: false, reason: "empty-text" };
   }
 
@@ -1601,10 +1820,6 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     };
   }
 
-  // Tier 1 + escalation scan: include preceding context so pronoun-only snippets
-  // still inherit entity hits. The LLM still receives preceding separately.
-  const tier1Scope = [precedingTrim, text].filter(Boolean).join("\n\n");
-
   const [local, sync] = await Promise.all([
     chrome.storage.local.get([SHOW_CONTEXTS_KEY, EVAL_CACHE_KEY]),
     chrome.storage.sync.get(["protectedShows", "activeProtectedShows"]),
@@ -1622,13 +1837,65 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     return { isSpoiler: false, reason: "no-active-shows" };
   }
 
+  if (canHardAllowCareerAdvice(tier0Scope, protectedShows)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-career-advice",
+      matchedShow: "",
+      source: "tier0-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
+
+  if (canHardAllowGamingMmoPost(tier0Scope, protectedShows)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-gaming-mmo",
+      matchedShow: "",
+      source: "tier0-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
+
+  if (canHardAllowPromoTrailer(tier0Scope, protectedShows)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-promo-trailer",
+      matchedShow: "",
+      source: "tier0-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
+
+  if (canHardAllowFranchiseBusinessMeta(tier0Scope)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-franchise-business-meta",
+      matchedShow: "",
+      source: "tier0-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
+
+  // Tier 1 + escalation scan: include preceding context so pronoun-only snippets
+  // still inherit entity hits. The LLM still receives preceding separately.
+  const tier1Scope = [precedingTrim, text].filter(Boolean).join("\n\n");
+
   const tier1ByShow = {};
   const matchedShows = protectedShows.filter((showName) => {
     const analysis = tier1AnalyzeShow(tier1Scope, showContexts[showName], showName);
     tier1ByShow[showName] = analysis;
     return analysis.isMatch;
   });
-  console.info(`${LOG_PREFIX} SEMANTIC_CHECK tier1 result`, {
+  debugLog(`${LOG_PREFIX} SEMANTIC_CHECK tier1 result`, {
     textLength: text.length,
     protectedShows: protectedShows.length,
     matchedShows,
@@ -1646,6 +1913,18 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     };
   }
 
+  if (canHardAllowUnrelatedPersonalPost(text, protectedShows)) {
+    return {
+      isSpoiler: false,
+      confidence: 0.03,
+      reason: "deterministic-unrelated-personal",
+      matchedShow: "",
+      source: "tier1-hard-allow",
+      sectionHint,
+      containerTag,
+    };
+  }
+
   // No Tier 1 match: on real pages, only escalate for self-labelled spoilers or
   // speculative-leak phrasing (v14.4+) — generic "killed/shooting" must not fan out to
   // the LLM for every shield. The fixture harness (containerTag FIXTURE) has no
@@ -1655,7 +1934,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   const selfLabelsSpoiler = /\bspoilers?\b/i.test(tier1Scope);
   if (!matchedShows.length) {
     if (isFixtureCheck) {
-      console.info(`${LOG_PREFIX} SEMANTIC_CHECK escalating to LLM (fixture-harness)`, {
+      debugLog(`${LOG_PREFIX} SEMANTIC_CHECK escalating to LLM (fixture-harness)`, {
         protectedShows: protectedShows.length,
       });
       matchedShows.push(...protectedShows);
@@ -1671,10 +1950,9 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
         : futureAppearanceRumor
           ? "future-appearance-rumor"
           : "speculative-leak-cue";
-      console.info(
-        `${LOG_PREFIX} SEMANTIC_CHECK escalating to LLM (${escalationReason})`,
-        { protectedShows: protectedShows.length }
-      );
+      debugLog(`${LOG_PREFIX} SEMANTIC_CHECK escalating to LLM (${escalationReason})`, {
+        protectedShows: protectedShows.length,
+      });
       matchedShows.push(...protectedShows);
     }
   }
@@ -1688,6 +1966,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     pageUrl,
     sectionHint,
     matchedShows,
+    protectedShows,
     tier1ByShow,
     showContexts,
   });
@@ -1724,7 +2003,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     )}::${containerTag}::${normalizeForMatch(precedingTrim.slice(0, 480))}::${[...matchedShows].sort().join("|")}`
   );
   if (evalCache[cacheKey] && typeof evalCache[cacheKey] === "object") {
-    console.info(`${LOG_PREFIX} SEMANTIC_CHECK cache-hit`, {
+    debugLog(`${LOG_PREFIX} SEMANTIC_CHECK cache-hit`, {
       cacheKey,
       verdict: evalCache[cacheKey],
     });
@@ -1743,7 +2022,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     try {
       const verdict = await runSemanticJudge(showName, showContext, text, precedingContext);
       const shouldBlur = verdict.isSpoiler && verdict.confidence >= dynamicThreshold;
-      console.info(`${LOG_PREFIX} SEMANTIC_CHECK tier2 result`, {
+      debugLog(`${LOG_PREFIX} SEMANTIC_CHECK tier2 result`, {
         showName,
         verdict,
         shouldBlur,
@@ -1783,7 +2062,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
 
   evalCache[cacheKey] = finalVerdict;
   await chrome.storage.local.set({ [EVAL_CACHE_KEY]: evalCache });
-  console.info(`${LOG_PREFIX} SEMANTIC_CHECK completed`, {
+  debugLog(`${LOG_PREFIX} SEMANTIC_CHECK completed`, {
     cacheKey,
     verdict: finalVerdict,
     threshold: dynamicThreshold,
@@ -1806,7 +2085,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   const containerTag = message?.containerTag;
   const precedingContext = message?.precedingContext;
 
-  console.info(`${LOG_PREFIX} message received`, {
+  debugLog(`${LOG_PREFIX} message received`, {
     type,
     showName,
     hasText: Boolean(textToAnalyze),
@@ -1821,7 +2100,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       return handleSemanticCheck(textToAnalyze, sender?.url || "", sectionHint, containerTag, precedingContext);
     }
     if (type === "BLUR_APPLIED") {
-      console.info(`${LOG_PREFIX} BLUR_APPLIED`, {
+      debugLog(`${LOG_PREFIX} BLUR_APPLIED`, {
         href: message?.href,
         tagName: message?.tagName,
         textLength: message?.textLength,
@@ -1830,9 +2109,8 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       return { ok: true };
     }
     if (type === "REPORT_FALSE_POSITIVE") {
-      const local = await chrome.storage.local.get(["false_positives"]);
-      const list = Array.isArray(local.false_positives) ? local.false_positives : [];
-      list.push({
+      const report = {
+        id: crypto.randomUUID?.() || `fp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         timestamp: new Date().toISOString(),
         url: message?.url || "",
         show: message?.show || "",
@@ -1840,19 +2118,32 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         reason: message?.reason || "",
         confidence: message?.confidence ?? null,
         source: message?.source || "",
+        detectorVersion: DETECTOR_VERSION,
+      };
+
+      const ingested = await ingestFalsePositiveReport(report);
+      let savedLocal = false;
+
+      if (KEEP_LOCAL_FALSE_POSITIVE_COPIES) {
+        const local = await chrome.storage.local.get([FALSE_POSITIVES_KEY]);
+        const list = Array.isArray(local[FALSE_POSITIVES_KEY]) ? local[FALSE_POSITIVES_KEY] : [];
+        list.push(report);
+        await chrome.storage.local.set({ [FALSE_POSITIVES_KEY]: list.slice(-100) });
+        savedLocal = true;
+      }
+
+      debugLog(`${LOG_PREFIX} REPORT_FALSE_POSITIVE`, {
+        show: report.show,
+        reason: report.reason,
+        ingested,
+        savedLocal,
       });
-      await chrome.storage.local.set({ false_positives: list.slice(-100) });
-      console.info(`${LOG_PREFIX} REPORT_FALSE_POSITIVE saved`, {
-        show: message?.show,
-        reason: message?.reason,
-        total: list.length,
-      });
-      return { ok: true };
+      return { ingested, savedLocal };
     }
     throw new Error("Unsupported message type");
   })()
     .then((result) => {
-      console.info(`${LOG_PREFIX} message handled`, { type, ok: true, result });
+      debugLog(`${LOG_PREFIX} message handled`, { type, ok: true, result });
       return { ok: true, data: result };
     })
     .catch((error) => {

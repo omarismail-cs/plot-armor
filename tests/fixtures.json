@@ -363,5 +363,41 @@
     "protectedShows": ["Spider-Man: Brand New Day"],
     "text": "Do you think Spider-Man: Brand New Day has a realistic shot at $2 billion worldwide?",
     "expectedSpoiler": false
+  },
+  {
+    "id": "PA-057",
+    "protectedShows": ["Spider-Man: Brand New Day", "The Last of Us", "Succession"],
+    "text": "I had zero coding experience. I built an Android app anyway. I'd never written a line of Kotlin. I just had an idea and thought — how hard can it be? (Very hard, as it turns out.) The idea itself is dead simple: a journaling app where you write one line a day. I built it because every journaling app I tried made me feel like I was failing.",
+    "expectedSpoiler": false
+  },
+  {
+    "id": "PA-058",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "First retail job ever, any advice? I just got hired at Ross and this is my first job ever, so I'm pretty nervous. How did you memorize everything when you first started? I'm worried about forgetting stuff during training since it seems like there's so much to learn.",
+    "expectedSpoiler": false
+  },
+  {
+    "id": "PA-059",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "Spider-Man Brand New Day Official Screen X Trailer",
+    "expectedSpoiler": false
+  },
+  {
+    "id": "PA-060",
+    "protectedShows": ["Severance"],
+    "text": "The dead internet theory in action: In World of Warcraft, a server without humans has appeared — instead, 1,800 DeepSeek-based bots are playing there. The bots behave like regular players: they chat, level up characters, run dungeons, and even fight each other.",
+    "expectedSpoiler": false
+  },
+  {
+    "id": "PA-061",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "Forget about the dad's crazy idea. The truck is a beast!",
+    "expectedSpoiler": false
+  },
+  {
+    "id": "PA-062",
+    "protectedShows": ["Daredevil: Born Again"],
+    "text": "It is written into the Spidey contract with Sony that two MCU characters have to appear in the movies. I'm pretty sure you just made that up.",
+    "expectedSpoiler": false
   }
 ]

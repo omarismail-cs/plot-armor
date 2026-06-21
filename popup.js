@@ -2,6 +2,7 @@ const STORAGE_KEY = "protectedShows";
 const ACTIVE_SHOWS_KEY = "activeProtectedShows";
 const SHOW_THUMBNAILS_KEY = "showThumbnails";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w92";
+const DEBUG = false;
 
 const inputEl = document.getElementById("showInput");
 const addBtn = document.getElementById("addBtn");
@@ -19,6 +20,12 @@ let showThumbnails = {};
 let activeShowMap = {};
 /** Shows currently waiting on background keyword / graph sync */
 const pendingKeywordSync = new Set();
+
+function debugLog(message, payload) {
+  if (!DEBUG) return;
+  if (payload !== undefined) console.info(message, payload);
+  else console.info(message);
+}
 
 function refIdForShow(show) {
   let h = 0;
@@ -288,16 +295,8 @@ function setShowStatus(showName, status) {
   if (status === "error") item.classList.add("is-error");
 }
 
-function getShows() {
-  return loadSyncState();
-}
-
-function setShows(shows) {
-  return saveSyncState(shows);
-}
-
 function requestKeywordRefresh(show, isRefresh = false, tmdbSelection = null) {
-  console.info("[Plot Armor popup] Sending show to background", { show, isRefresh, tmdbSelection });
+  debugLog("[Plot Armor popup] Sending show to background", { show, isRefresh, tmdbSelection });
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
       { type: "SHOW_ADDED", showName: show, tmdbSelection: tmdbSelection || undefined },
@@ -310,7 +309,7 @@ function requestKeywordRefresh(show, isRefresh = false, tmdbSelection = null) {
           reject(new Error(response?.error || "Unknown error"));
           return;
         }
-        console.info("[Plot Armor popup] Background processing succeeded", response.data);
+        debugLog("[Plot Armor popup] Background processing succeeded", response.data);
         resolve(response.data);
       }
     );
@@ -318,7 +317,7 @@ function requestKeywordRefresh(show, isRefresh = false, tmdbSelection = null) {
 }
 
 function requestShowRemoval(show) {
-  console.info("[Plot Armor popup] Removing show", { show });
+  debugLog("[Plot Armor popup] Removing show", { show });
   chrome.runtime.sendMessage({ type: "SHOW_REMOVED", showName: show }, (response) => {
     if (chrome.runtime.lastError) {
       console.error("Plot Armor background remove message error:", chrome.runtime.lastError.message);
@@ -328,7 +327,7 @@ function requestShowRemoval(show) {
       console.error("Plot Armor failed to remove show keywords:", response?.error || "Unknown error");
       return;
     }
-    console.info("[Plot Armor popup] Show removal processed", response.data);
+    debugLog("[Plot Armor popup] Show removal processed", response.data);
   });
 }
 
@@ -343,7 +342,7 @@ async function addShow() {
   syncAddButtonState();
   hideSuggestions();
 
-  const shows = await getShows();
+  const shows = await loadSyncState();
   const exists = shows.some((item) => item.toLowerCase() === show.toLowerCase());
 
   if (!exists) {
@@ -353,10 +352,10 @@ async function addShow() {
       showThumbnails[show] = tmdbSel.posterPath;
       await saveThumbnails();
     }
-    await setShows(updatedShows);
+    await saveSyncState(updatedShows);
   }
 
-  const currentShows = await getShows();
+  const currentShows = await loadSyncState();
   pendingKeywordSync.add(show);
   renderShows(currentShows);
 
@@ -368,7 +367,7 @@ async function addShow() {
     console.error("[Plot Armor popup] Story graph failed", err);
   } finally {
     pendingKeywordSync.delete(show);
-    renderShows(await getShows());
+    renderShows(await loadSyncState());
   }
   if (syncFailed) setShowStatus(show, "error");
 }
@@ -394,9 +393,9 @@ listEl.addEventListener("change", async (event) => {
   if (!input) return;
   const showToToggle = input.dataset.show;
   if (!showToToggle) return;
-  const shows = await getShows();
+  const shows = await loadSyncState();
   activeShowMap[showToToggle] = input.checked;
-  await setShows(shows);
+  await saveSyncState(shows);
   renderShows(shows);
 });
 
@@ -407,7 +406,7 @@ listEl.addEventListener("click", async (event) => {
   const showToRemove = removeBtn.dataset.show;
   if (!showToRemove) return;
 
-  const shows = await getShows();
+  const shows = await loadSyncState();
   const updatedShows = shows.filter((showName) => showName !== showToRemove);
   delete activeShowMap[showToRemove];
 
@@ -416,7 +415,7 @@ listEl.addEventListener("click", async (event) => {
     await saveThumbnails();
   }
 
-  await setShows(updatedShows);
+  await saveSyncState(updatedShows);
   renderShows(updatedShows);
   requestShowRemoval(showToRemove);
 });
@@ -528,20 +527,20 @@ document.addEventListener("click", (event) => {
 });
 
 pauseAllBtn?.addEventListener("click", async () => {
-  const shows = await getShows();
+  const shows = await loadSyncState();
   shows.forEach((show) => {
     activeShowMap[show] = false;
   });
-  await setShows(shows);
+  await saveSyncState(shows);
   renderShows(shows);
 });
 
 enableAllBtn?.addEventListener("click", async () => {
-  const shows = await getShows();
+  const shows = await loadSyncState();
   shows.forEach((show) => {
     activeShowMap[show] = true;
   });
-  await setShows(shows);
+  await saveSyncState(shows);
   renderShows(shows);
 });
 

@@ -1,11 +1,9 @@
-console.log("Plot Armor semantic mode active");
-
 const BLUR_CLASS = "plot-armor-blurred";
 const OVERLAY_CLASS = "plot-armor-overlay";
 const PROCESSED_ATTR = "data-plot-armor-processed";
 const VISIBLE_ATTR = "data-plot-armor-visible";
 const USER_REVEALED_ATTR = "data-plot-armor-user-revealed";
-const DEBUG = true;
+const DEBUG = false;
 const MIN_TEXT_LENGTH = 40;
 const MAX_ANALYZE_CHARS = 900;
 const DEBOUNCE_MS = 100;
@@ -70,11 +68,18 @@ let processVisibleDebounce = null;
 const observedContainers = new WeakSet();
 const visibleContainers = new Set();
 const queuedContainers = new WeakSet();
+/** Survives Reddit re-hydrating shreddit nodes after a reveal click (thing id / permalink). */
+const redditUserRevealedKeys = new Set();
+const plotArmorRevealNodes = new WeakMap();
+const evaluationGeneration = new WeakMap();
+const pendingRedditReportSessions = new WeakMap();
+let redditEarlyRevealInstalled = false;
 
 /** X virtualizes timeline cells; we must unobserve removed nodes or IO holds strong refs and scroll/load stalls. */
 function cleanupObservedContainer(container) {
   if (!(container instanceof Element)) return;
   if (!observedContainers.has(container)) return;
+  const revealed = wasPlotArmorUserRevealed(container);
   const blurSurface = getPlotArmorBlurSurface(container);
   if (blurSurface.classList.contains(BLUR_CLASS) || container.classList.contains(BLUR_CLASS)) {
     revealContainer(container, { skipReport: true });
@@ -86,9 +91,14 @@ function cleanupObservedContainer(container) {
   for (let i = pendingEvaluationQueue.length - 1; i >= 0; i -= 1) {
     if (pendingEvaluationQueue[i] === container) pendingEvaluationQueue.splice(i, 1);
   }
-  container.removeAttribute(PROCESSED_ATTR);
   container.removeAttribute(VISIBLE_ATTR);
-  container.removeAttribute(USER_REVEALED_ATTR);
+  if (revealed) {
+    container.setAttribute(PROCESSED_ATTR, "1");
+    container.setAttribute(USER_REVEALED_ATTR, "1");
+  } else {
+    container.removeAttribute(PROCESSED_ATTR);
+    container.removeAttribute(USER_REVEALED_ATTR);
+  }
 }
 
 function cleanupRemovedSubtree(root) {
@@ -277,7 +287,40 @@ function injectStyles() {
       user-select: none;
       vertical-align: middle;
       line-height: 1.6;
-      transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, padding 0.15s ease, max-width 0.2s ease;
+      transform-origin: center center;
+      animation: plot-armor-report-enter 0.32s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+      transition:
+        color 0.22s ease,
+        background 0.22s ease,
+        border-color 0.22s ease,
+        box-shadow 0.22s ease,
+        transform 0.26s cubic-bezier(0.34, 1.4, 0.64, 1),
+        opacity 0.28s ease,
+        padding 0.24s ease,
+        max-width 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+        gap 0.24s ease;
+    }
+
+    @keyframes plot-armor-report-enter {
+      from {
+        opacity: 0;
+        transform: translateY(5px) scale(0.92);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes plot-armor-report-host-enter {
+      from {
+        opacity: 0;
+        transform: scale(0.88);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
     }
 
     .plot-armor-report-btn svg {
@@ -286,6 +329,12 @@ function injectStyles() {
       display: block;
       flex-shrink: 0;
       color: #ff9e3d;
+      transition: transform 0.26s cubic-bezier(0.34, 1.4, 0.64, 1), color 0.22s ease;
+    }
+
+    .plot-armor-report-btn-text {
+      display: inline-block;
+      transition: opacity 0.2s ease, transform 0.22s ease, max-width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
     }
 
     .plot-armor-report-btn:hover {
@@ -294,11 +343,54 @@ function injectStyles() {
       border-color: rgba(255, 94, 126, 0.45);
     }
 
+    .plot-armor-report-btn.reporting {
+      transform: scale(0.97);
+      border-color: rgba(255, 158, 61, 0.35);
+      pointer-events: none;
+    }
+
+    .plot-armor-report-btn.reporting .plot-armor-report-btn-text {
+      opacity: 0.55;
+    }
+
+    .plot-armor-report-btn.reporting svg {
+      transform: scale(0.92);
+      opacity: 0.7;
+    }
+
     .plot-armor-report-btn.reported {
       color: #ff9e3d;
-      border-color: rgba(255, 158, 61, 0.4);
-      background: rgba(28, 23, 20, 0.92);
+      border-color: rgba(255, 158, 61, 0.5);
+      background: rgba(28, 23, 20, 0.96);
+      box-shadow: 0 0 0 1px rgba(255, 158, 61, 0.12), 0 4px 14px rgba(0, 0, 0, 0.38);
+      transform: scale(1);
       pointer-events: none;
+    }
+
+    .plot-armor-report-btn.reported svg {
+      transform: scale(1.08);
+      color: #ffb35c;
+    }
+
+    .plot-armor-report-btn.reported .plot-armor-report-btn-text {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .plot-armor-report-btn.reported-error {
+      color: #ff5e7e;
+      border-color: rgba(255, 94, 126, 0.5);
+      box-shadow: 0 0 0 1px rgba(255, 94, 126, 0.1), 0 4px 14px rgba(0, 0, 0, 0.38);
+    }
+
+    .plot-armor-report-btn.reported-error svg {
+      color: #ff5e7e;
+      transform: scale(1);
+    }
+
+    .plot-armor-report-btn.report-fade-out {
+      opacity: 0;
+      transform: scale(0.94) translateY(3px);
     }
 
     .plot-armor-report-btn--host {
@@ -313,6 +405,7 @@ function injectStyles() {
       background: rgba(16, 12, 10, 0.72);
       border-color: #2c231d;
       border-radius: 8px;
+      animation: plot-armor-report-host-enter 0.28s cubic-bezier(0.34, 1.4, 0.64, 1) both;
     }
 
     .plot-armor-report-btn--host .plot-armor-report-btn-text {
@@ -320,7 +413,6 @@ function injectStyles() {
       opacity: 0;
       white-space: nowrap;
       overflow: hidden;
-      transition: max-width 0.18s ease, opacity 0.12s ease, margin-left 0.18s ease;
       margin-left: 0;
     }
 
@@ -337,6 +429,52 @@ function injectStyles() {
       max-width: 160px;
       opacity: 1;
       margin-left: 4px;
+    }
+
+    .plot-armor-report-btn--host.reporting,
+    .plot-armor-report-btn--host.reported,
+    .plot-armor-report-btn--host.reported-error {
+      padding: 4px 10px 4px 6px;
+      gap: 6px;
+      max-width: 200px;
+    }
+
+    .plot-armor-report-btn--host.reporting .plot-armor-report-btn-text,
+    .plot-armor-report-btn--host.reported .plot-armor-report-btn-text,
+    .plot-armor-report-btn--host.reported-error .plot-armor-report-btn-text {
+      max-width: 160px;
+      opacity: 1;
+      margin-left: 4px;
+    }
+
+    .plot-armor-report-btn--reddit {
+      margin: 0 0 0 4px;
+      padding: 0 10px;
+      height: 32px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 999px;
+      vertical-align: middle;
+      align-self: center;
+      flex-shrink: 0;
+      box-shadow: none;
+      background: var(--color-button-secondary-bg, transparent);
+      border: var(--border-width-sm, 1px) solid var(--color-neutral-border-weak, rgba(255, 255, 255, 0.14));
+      color: var(--color-neutral-content-weak, #8b949e);
+      transform: translateX(-2px);
+    }
+
+    .plot-armor-report-btn--reddit:hover,
+    .plot-armor-report-btn--reddit:focus-visible {
+      color: var(--color-neutral-content-strong, #e6edf3);
+      background: var(--color-button-secondary-hover, rgba(255, 255, 255, 0.06));
+      border-color: var(--color-neutral-border-strong, rgba(255, 255, 255, 0.22));
+    }
+
+    .plot-armor-report-btn--reddit.reported,
+    .plot-armor-report-btn--reddit.reported-error {
+      background: rgba(28, 23, 20, 0.92);
+      border-color: rgba(255, 158, 61, 0.45);
     }
   `;
   parent.appendChild(style);
@@ -407,7 +545,54 @@ function resolvePlotArmorContainer(el) {
   if (commentRoot instanceof Element && findRedditCommentBody(commentRoot) === el) {
     return commentRoot;
   }
+  if (isRedditHost()) {
+    const post = el.closest("shreddit-post");
+    if (post instanceof Element) return post;
+    if (el.matches("article")) {
+      const nestedPost = el.querySelector(":scope > shreddit-post, shreddit-post");
+      if (nestedPost instanceof Element) return nestedPost;
+    }
+  }
   return el;
+}
+
+function findRedditFeedWrapper(post) {
+  if (!(post instanceof Element) || !post.matches("shreddit-post")) return null;
+  const parentArticle = post.parentElement?.closest?.("article[data-post-id], article");
+  if (!(parentArticle instanceof Element)) return null;
+  if (parentArticle.querySelector("shreddit-post") !== post) return null;
+  return parentArticle;
+}
+
+function stripPlotArmorBlurShell(container) {
+  if (!(container instanceof Element)) return;
+  const blurSurface = getPlotArmorBlurSurface(container);
+  blurSurface.classList.remove(BLUR_CLASS);
+  blurSurface.removeAttribute("data-plot-armor-blurred");
+  container.classList.remove(BLUR_CLASS);
+  container.removeAttribute("data-plot-armor-blurred");
+
+  const overlay = blurSurface.querySelector(`:scope > .${OVERLAY_CLASS}`);
+  if (overlay) overlay.remove();
+  blurSurface.querySelector(":scope > .plot-armor-x-veil")?.remove();
+  blurSurface.querySelector(":scope > .plot-armor-intercept")?.remove();
+
+  const wrapper = blurSurface.querySelector(":scope > .plot-armor-blur-wrapper");
+  if (wrapper) {
+    while (wrapper.firstChild) blurSurface.insertBefore(wrapper.firstChild, wrapper);
+    wrapper.remove();
+  }
+}
+
+function syncRedditFeedWrapperState(post) {
+  if (!(post instanceof Element) || !post.matches("shreddit-post")) return;
+  const wrapper = findRedditFeedWrapper(post);
+  if (!(wrapper instanceof Element)) return;
+  wrapper.setAttribute(USER_REVEALED_ATTR, "1");
+  wrapper.setAttribute(PROCESSED_ATTR, "1");
+  cancelPendingEvaluation(wrapper);
+  rememberRedditUserReveal(wrapper);
+  stripPlotArmorBlurShell(wrapper);
 }
 
 function appendInlineReportButton(target, reportBtn) {
@@ -426,7 +611,262 @@ function appendInlineReportButton(target, reportBtn) {
   target.appendChild(reportBtn);
 }
 
+const PLOT_ARMOR_SHADOW_STYLE_ID = "plot-armor-shadow-style";
+
+const PLOT_ARMOR_REPORT_SHADOW_CSS = `
+  .plot-armor-report-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px;
+    margin: 0 0 0 4px !important;
+    padding: 0 10px !important;
+    height: var(--size-button-sm-h, 32px) !important;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.01em;
+    text-transform: lowercase;
+    color: var(--color-neutral-content-weak, #8b949e) !important;
+    background: var(--color-button-secondary-bg, transparent) !important;
+    border: var(--border-width-sm, 1px) solid var(--color-neutral-border-weak, rgba(255, 255, 255, 0.14)) !important;
+    border-radius: 999px !important;
+    box-shadow: none !important;
+    cursor: pointer !important;
+    pointer-events: auto !important;
+    user-select: none;
+    vertical-align: middle;
+    line-height: 1.2 !important;
+    flex-shrink: 0 !important;
+    position: relative !important;
+    z-index: 2 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    transform: translateX(-2px);
+    animation: plot-armor-report-enter 0.32s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+  .plot-armor-report-btn svg {
+    width: 12px;
+    height: 12px;
+    display: block;
+    flex-shrink: 0;
+    color: #ff9e3d;
+  }
+  .plot-armor-report-btn:hover,
+  .plot-armor-report-btn:focus-visible {
+    color: var(--color-neutral-content-strong, #e6edf3) !important;
+    background: var(--color-button-secondary-hover, rgba(255, 255, 255, 0.06)) !important;
+    border-color: var(--color-neutral-border-strong, rgba(255, 255, 255, 0.22)) !important;
+  }
+  @keyframes plot-armor-report-enter {
+    from { opacity: 0; transform: translateX(-2px) translateY(4px) scale(0.94); }
+    to { opacity: 1; transform: translateX(-2px) translateY(0) scale(1); }
+  }
+`;
+
+function ensurePlotArmorStylesInRoot(root) {
+  if (!(root instanceof ShadowRoot) || root.getElementById(PLOT_ARMOR_SHADOW_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = PLOT_ARMOR_SHADOW_STYLE_ID;
+  style.textContent = PLOT_ARMOR_REPORT_SHADOW_CSS;
+  root.appendChild(style);
+}
+
+function getRedditPlacementRoots(container) {
+  const roots = [];
+  const seen = new Set();
+  const add = (node) => {
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    roots.push(node);
+  };
+
+  const post = container.matches?.("shreddit-post") ? container : container.closest("shreddit-post");
+  const comment = isRedditCommentContainer(container) ? container : null;
+
+  add(container);
+  if (post) {
+    add(post);
+    if (post.shadowRoot) add(post.shadowRoot);
+  }
+  if (comment) add(comment);
+
+  return roots;
+}
+
+function queryRedditDeep(container, selector) {
+  for (const root of getRedditPlacementRoots(container)) {
+    if (typeof root.querySelector !== "function") continue;
+    const direct = root.querySelector(selector);
+    if (direct instanceof Element) return direct;
+    for (const host of root.querySelectorAll("*")) {
+      if (!host.shadowRoot) continue;
+      const nested = host.shadowRoot.querySelector(selector);
+      if (nested instanceof Element) return nested;
+    }
+  }
+  return null;
+}
+
+function findRedditActionBar(container) {
+  if (!(container instanceof Element) || !isRedditHost()) return null;
+
+  const bar = queryRedditDeep(container, "rpl-action-bar");
+  if (bar instanceof Element) return bar;
+
+  const commentSlot =
+    container.querySelector(':scope div[slot="actionRow"]') ||
+    container.closest("shreddit-comment")?.querySelector('div[slot="actionRow"]');
+  if (commentSlot instanceof Element) return commentSlot;
+
+  return null;
+}
+
+function findRedditShareHost(actionBar) {
+  if (!(actionBar instanceof Element)) return null;
+
+  let share = actionBar.querySelector("shreddit-post-share-button");
+  if (share instanceof Element) return share;
+
+  for (const row of actionBar.querySelectorAll("shreddit-comment-action-row")) {
+    share = row.querySelector("shreddit-post-share-button");
+    if (share instanceof Element) return share;
+    if (row.shadowRoot) {
+      share = row.shadowRoot.querySelector("shreddit-post-share-button");
+      if (share instanceof Element) return share;
+    }
+  }
+
+  return null;
+}
+
+function stylizeRedditReportButton(reportBtn) {
+  reportBtn.classList.add("plot-armor-report-btn--reddit");
+  reportBtn.style.setProperty("display", "inline-flex", "important");
+  reportBtn.style.setProperty("align-items", "center", "important");
+  reportBtn.style.setProperty("flex-shrink", "0", "important");
+  reportBtn.style.setProperty("visibility", "visible", "important");
+  reportBtn.style.setProperty("opacity", "1", "important");
+}
+
+function placeRedditReportButton(container, reportBtn) {
+  if (reportBtn.isConnected) return true;
+
+  const actionBar = findRedditActionBar(container);
+  if (!(actionBar instanceof Element)) return false;
+
+  actionBar.querySelectorAll(".plot-armor-report-btn").forEach((btn) => btn.remove());
+
+  const root = actionBar.getRootNode();
+  if (root instanceof ShadowRoot) ensurePlotArmorStylesInRoot(root);
+
+  stylizeRedditReportButton(reportBtn);
+
+  const shareHost = findRedditShareHost(actionBar);
+  if (shareHost instanceof Element) {
+    shareHost.insertAdjacentElement("afterend", reportBtn);
+  } else {
+    const msAuto = actionBar.querySelector(".ms-auto");
+    if (msAuto instanceof Element) {
+      msAuto.insertAdjacentElement("beforebegin", reportBtn);
+    } else {
+      actionBar.appendChild(reportBtn);
+    }
+  }
+
+  return reportBtn.isConnected;
+}
+
+function scheduleRedditReportButtonPlacement(container, reportBtn, fallback) {
+  const prior = pendingRedditReportSessions.get(container);
+  if (prior) prior.cancel();
+
+  let attempts = 0;
+  let settled = false;
+  let observer = null;
+  let intervalId = null;
+  let timeoutId = null;
+
+  const session = {
+    cancel() {
+      if (settled) return;
+      settled = true;
+      if (observer) observer.disconnect();
+      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (pendingRedditReportSessions.get(container) === session) {
+        pendingRedditReportSessions.delete(container);
+      }
+    },
+  };
+  pendingRedditReportSessions.set(container, session);
+
+  const finish = (useFallback) => {
+    if (settled) return;
+    settled = true;
+    if (observer) observer.disconnect();
+    if (intervalId) clearInterval(intervalId);
+    if (timeoutId) clearTimeout(timeoutId);
+    pendingRedditReportSessions.delete(container);
+    if (useFallback && !reportBtn.isConnected) fallback();
+  };
+
+  const tryPlace = () => {
+    if (settled || !container.isConnected) return;
+    if (placeRedditReportButton(container, reportBtn)) {
+      finish(false);
+      return;
+    }
+    attempts += 1;
+    if (attempts >= 30) finish(true);
+  };
+
+  const watchTarget = container.closest("shreddit-post") || container;
+  if (watchTarget instanceof Element) {
+    observer = new MutationObserver(tryPlace);
+    observer.observe(watchTarget, { childList: true, subtree: true });
+    if (watchTarget.shadowRoot) {
+      observer.observe(watchTarget.shadowRoot, { childList: true, subtree: true });
+    }
+  }
+
+  intervalId = setInterval(tryPlace, 200);
+  timeoutId = setTimeout(() => finish(true), 5000);
+
+  requestAnimationFrame(tryPlace);
+}
+
+function appendRedditReportButtonFallback(container, reportBtn, onRedditComment, blurSurface) {
+  if (onRedditComment) {
+    appendInlineReportButton(findRedditCommentBody(container) || blurSurface, reportBtn);
+    return;
+  }
+  const lastTextChild = Array.from(container.childNodes)
+    .reverse()
+    .find((n) => n.nodeType === Node.ELEMENT_NODE || (n.nodeType === Node.TEXT_NODE && n.textContent.trim()));
+  if (lastTextChild && lastTextChild.nodeType === Node.ELEMENT_NODE) {
+    lastTextChild.appendChild(reportBtn);
+  } else {
+    container.appendChild(reportBtn);
+  }
+}
+
 /** Place host report chip just left of X's Grok control (avoids overlap with Grok + overflow). */
+function dismissReportButton(reportBtn, holdMs = 1000) {
+  setTimeout(() => {
+    if (!reportBtn.isConnected) return;
+    reportBtn.classList.add("report-fade-out");
+    setTimeout(() => reportBtn.remove(), 300);
+  }, holdMs);
+}
+
+function finishReportButtonFeedback(reportBtn, reportText, label, isError = false) {
+  reportBtn.classList.remove("reporting");
+  reportBtn.classList.add("reported");
+  if (isError) reportBtn.classList.add("reported-error");
+  reportText.textContent = label;
+  dismissReportButton(reportBtn, isError ? 1600 : 1100);
+}
+
 function schedulePositionXReportButton(container, reportBtn) {
   const gapPx = 10;
   const fallbackRightPx = 88;
@@ -454,17 +894,162 @@ function schedulePositionXReportButton(container, reportBtn) {
   });
 }
 
-function markPlotArmorUserRevealed(container) {
+function parseRedditThingIdFromTracking(el) {
+  if (!(el instanceof Element)) return null;
+  const raw = el.getAttribute("data-faceplate-tracking-context");
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const id = parsed?.post?.id || parsed?.comment?.id;
+    if (typeof id === "string" && /^t[13]_/.test(id)) return id;
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+function getRedditRevealKey(container) {
+  if (!isRedditHost() || !(container instanceof Element)) return null;
+  const logical = resolvePlotArmorContainer(container);
+  const post =
+    logical.matches("shreddit-post") ? logical : logical.closest("shreddit-post");
+  const wrapper = post instanceof Element ? findRedditFeedWrapper(post) : null;
+
+  const postId =
+    post?.getAttribute("post-id") ||
+    post?.getAttribute("data-post-id") ||
+    wrapper?.getAttribute("data-post-id") ||
+    wrapper?.getAttribute("post-id") ||
+    logical.getAttribute("post-id") ||
+    logical.getAttribute("data-post-id") ||
+    logical.getAttribute("itemid");
+  if (postId && /^t[13]_/.test(postId)) return postId;
+
+  const thingid = logical.getAttribute("thingid");
+  if (thingid && /^t[13]_/.test(thingid)) return thingid;
+
+  const ancestorThingid = logical.closest("[thingid]")?.getAttribute("thingid");
+  if (ancestorThingid && /^t[13]_/.test(ancestorThingid)) return ancestorThingid;
+
+  const id = logical.id || logical.getAttribute("id") || "";
+  if (/^t[13]_/.test(id)) return id;
+
+  const permalinkAttr = post?.getAttribute("permalink") || logical.getAttribute("permalink");
+  if (permalinkAttr && permalinkAttr.includes("/comments/")) {
+    const path = permalinkAttr.startsWith("http") ? new URL(permalinkAttr, location.origin).pathname : permalinkAttr;
+    return path.split("?")[0];
+  }
+
+  const trackingRoot = post || logical;
+  const trackingId =
+    parseRedditThingIdFromTracking(trackingRoot) ||
+    parseRedditThingIdFromTracking(trackingRoot.querySelector("shreddit-post-share-button"));
+  if (trackingId) return trackingId;
+
+  if (logical.matches("shreddit-post, shreddit-comment")) {
+    const permalink = logical.querySelector('a[href*="/comments/"]')?.getAttribute("href");
+    if (permalink) {
+      const path = permalink.startsWith("http") ? new URL(permalink, location.origin).pathname : permalink;
+      return path.split("?")[0];
+    }
+  }
+
+  const text = extractContainerText(logical).slice(0, 140);
+  if (text.length >= 48) return `text:${text}`;
+
+  return null;
+}
+
+function rememberRedditUserReveal(container) {
+  const key = getRedditRevealKey(container);
+  if (key) redditUserRevealedKeys.add(key);
+}
+
+function invalidateContainerEvaluations(container) {
   if (!(container instanceof Element)) return;
-  container.setAttribute(USER_REVEALED_ATTR, "1");
+  evaluationGeneration.set(container, (evaluationGeneration.get(container) || 0) + 1);
+  const wrapper = container.matches("shreddit-post") ? findRedditFeedWrapper(container) : null;
+  if (wrapper instanceof Element) {
+    evaluationGeneration.set(wrapper, (evaluationGeneration.get(wrapper) || 0) + 1);
+  }
+}
+
+function isStaleEvaluation(container, generation) {
+  if (!(container instanceof Element)) return true;
+  return (evaluationGeneration.get(container) || 0) !== generation;
+}
+
+function removePlotArmorReportButtonsInScope(container) {
+  const logical = resolvePlotArmorContainer(container);
+  const key = getRedditRevealKey(logical);
+
+  const purgeRoot = (root) => {
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    root.querySelectorAll(".plot-armor-report-btn").forEach((btn) => btn.remove());
+  };
+
+  purgeRoot(logical);
+  const post = logical.closest("shreddit-post");
+  purgeRoot(post);
+  purgeRoot(post?.shadowRoot);
+  purgeRoot(logical.shadowRoot);
+
+  if (key) {
+    document.querySelectorAll(".plot-armor-report-btn").forEach((btn) => {
+      if (btn.dataset.paRevealKey === key) btn.remove();
+    });
+  }
+}
+
+function cancelPendingEvaluation(container) {
+  if (!(container instanceof Element)) return;
+  queuedContainers.delete(container);
+  for (let i = pendingEvaluationQueue.length - 1; i >= 0; i -= 1) {
+    if (pendingEvaluationQueue[i] === container) pendingEvaluationQueue.splice(i, 1);
+  }
+}
+
+function commitPlotArmorUserReveal(container) {
+  const logical = resolvePlotArmorContainer(container);
+  if (!(logical instanceof Element)) return;
+  invalidateContainerEvaluations(logical);
+  logical.setAttribute(USER_REVEALED_ATTR, "1");
+  logical.setAttribute(PROCESSED_ATTR, "1");
+  cancelPendingEvaluation(logical);
+  rememberRedditUserReveal(logical);
+  syncRedditFeedWrapperState(logical);
 }
 
 function wasPlotArmorUserRevealed(container) {
   if (!(container instanceof Element)) return false;
-  return container.getAttribute(USER_REVEALED_ATTR) === "1";
+  const logical = resolvePlotArmorContainer(container);
+  if (logical.getAttribute(USER_REVEALED_ATTR) === "1") return true;
+  const wrapper = logical.matches("shreddit-post") ? findRedditFeedWrapper(logical) : null;
+  if (wrapper?.getAttribute(USER_REVEALED_ATTR) === "1") return true;
+  const redditKey = getRedditRevealKey(logical);
+  return Boolean(redditKey && redditUserRevealedKeys.has(redditKey));
+}
+
+function installRedditEarlyRevealGuard() {
+  if (!isRedditHost() || redditEarlyRevealInstalled) return;
+  redditEarlyRevealInstalled = true;
+  // Document capture runs before shreddit ancestor handlers that can re-hydrate the card.
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!(event.target instanceof Element)) return;
+      const hit = event.target.closest(`.${OVERLAY_CLASS}, .plot-armor-blur-wrapper, .plot-armor-intercept`);
+      if (!hit) return;
+      const container = plotArmorRevealNodes.get(hit);
+      if (!container) return;
+      commitPlotArmorUserReveal(container);
+    },
+    { capture: true }
+  );
 }
 
 function attachAtomicReveal(node, container) {
+  plotArmorRevealNodes.set(node, container);
   // Capture-phase + stopImmediatePropagation so first click reaches us before
   // the host site's own click interceptors (Reddit shreddit, X article navigation)
   // can swallow or re-render the event mid-flight (TC#15).
@@ -473,7 +1058,7 @@ function attachAtomicReveal(node, container) {
     event.stopImmediatePropagation();
     event.stopPropagation();
     // Before DOM peel / async SEMANTIC_CHECK resolves: blocks in-flight blur (Reddit snap-back).
-    markPlotArmorUserRevealed(container);
+    commitPlotArmorUserReveal(container);
     revealContainer(container);
   };
   node.addEventListener("click", handler, { capture: true });
@@ -555,6 +1140,7 @@ function revealContainer(container, options = {}) {
   const intercept = blurSurface.querySelector(":scope > .plot-armor-intercept");
   if (intercept) intercept.remove();
   logicalContainer.querySelectorAll(".plot-armor-report-btn").forEach((btn) => btn.remove());
+  removePlotArmorReportButtonsInScope(logicalContainer);
 
   // Unwrap blurred content wrapper back into the blur surface.
   // No-op when the host-blur path was used (e.g. X) since there is no wrapper.
@@ -563,6 +1149,8 @@ function revealContainer(container, options = {}) {
     while (wrapper.firstChild) blurSurface.insertBefore(wrapper.firstChild, wrapper);
     wrapper.remove();
   }
+
+  syncRedditFeedWrapperState(logicalContainer);
 
   if (skipReport) {
     return;
@@ -576,6 +1164,8 @@ function revealContainer(container, options = {}) {
   reportBtn.title = "Report this as a false positive";
   reportBtn.setAttribute("aria-label", "Report not a spoiler");
   reportBtn.style.setProperty("pointer-events", "auto", "important");
+  const revealKey = getRedditRevealKey(logicalContainer);
+  if (revealKey) reportBtn.dataset.paRevealKey = revealKey;
 
   reportBtn.appendChild(buildShieldIcon());
   const reportText = document.createElement("span");
@@ -592,8 +1182,8 @@ function revealContainer(container, options = {}) {
       event.stopImmediatePropagation();
       event.stopPropagation();
       clearTimeout(autoRemoveTimer);
-      reportText.textContent = "logged";
-      reportBtn.classList.add("reported");
+      reportBtn.classList.add("reporting");
+      reportText.textContent = "sending…";
       void sendExtensionMessage({
         type: "REPORT_FALSE_POSITIVE",
         text: extractContainerText(logicalContainer).slice(0, 500),
@@ -602,8 +1192,20 @@ function revealContainer(container, options = {}) {
         confidence: confidence !== "" ? Number(confidence) : null,
         source,
         url: location.href,
-      }).catch(() => {});
-      setTimeout(() => reportBtn.remove(), 1200);
+      })
+        .then((response) => {
+          if (!response?.ok) {
+            finishReportButtonFeedback(reportBtn, reportText, "couldn't send", true);
+            return;
+          }
+          const data = response.data || {};
+          if (data.ingested) finishReportButtonFeedback(reportBtn, reportText, "thanks!");
+          else if (data.savedLocal) finishReportButtonFeedback(reportBtn, reportText, "logged");
+          else finishReportButtonFeedback(reportBtn, reportText, "couldn't send", true);
+        })
+        .catch(() => {
+          finishReportButtonFeedback(reportBtn, reportText, "couldn't send", true);
+        });
     },
     { capture: true }
   );
@@ -617,8 +1219,11 @@ function revealContainer(container, options = {}) {
     }
     logicalContainer.appendChild(reportBtn);
     schedulePositionXReportButton(logicalContainer, reportBtn);
-  } else if (onRedditComment) {
-    appendInlineReportButton(findRedditCommentBody(logicalContainer) || blurSurface, reportBtn);
+  } else if (isRedditHost()) {
+    // Prefer the post/comment action row beside Share; fall back to inline copy.
+    scheduleRedditReportButtonPlacement(logicalContainer, reportBtn, () => {
+      appendRedditReportButtonFallback(logicalContainer, reportBtn, onRedditComment, blurSurface);
+    });
   } else {
     // Inject inline at the end of the last text-bearing child so the button
     // flows naturally after the last word without overlapping anything.
@@ -634,16 +1239,17 @@ function revealContainer(container, options = {}) {
 }
 
 function blurContainer(container, meta = {}) {
-  const blurSurface = getPlotArmorBlurSurface(container);
-  if (blurSurface.classList.contains(BLUR_CLASS) || container.classList.contains(BLUR_CLASS)) return;
-  if (wasPlotArmorUserRevealed(container)) {
+  const logical = resolvePlotArmorContainer(container);
+  const blurSurface = getPlotArmorBlurSurface(logical);
+  if (blurSurface.classList.contains(BLUR_CLASS) || logical.classList.contains(BLUR_CLASS)) return;
+  if (wasPlotArmorUserRevealed(logical)) {
     debugLog("skip blur: user already revealed this block", {});
     return;
   }
   ensureContainerPosition(blurSurface);
 
   const useDirectBlur = isXHost();
-  const redditCommentBodyOnly = blurSurface !== container;
+  const redditCommentBodyOnly = blurSurface !== logical;
   let blurWrapper = null;
 
   if (useDirectBlur) {
@@ -652,18 +1258,18 @@ function blurContainer(container, meta = {}) {
     // filter on <article> often misses <video> / compositor quirks.
     const veil = document.createElement("div");
     veil.className = "plot-armor-x-veil";
-    container.appendChild(veil);
+    logical.appendChild(veil);
 
     const intercept = document.createElement("div");
     intercept.className = "plot-armor-intercept";
-    attachAtomicReveal(intercept, container);
-    container.appendChild(intercept);
+    attachAtomicReveal(intercept, logical);
+    logical.appendChild(intercept);
   } else if (redditCommentBodyOnly) {
     // Reddit shreddit-comment: blur only slot="comment" copy, not meta/actions/replies.
     blurWrapper = document.createElement("div");
     blurWrapper.className = "plot-armor-blur-wrapper";
     Array.from(blurSurface.childNodes).forEach((node) => blurWrapper.appendChild(node));
-    attachAtomicReveal(blurWrapper, container);
+    attachAtomicReveal(blurWrapper, logical);
     blurSurface.appendChild(blurWrapper);
   } else {
     // Wrap ALL child nodes (including bare text nodes) in a single div so
@@ -674,7 +1280,7 @@ function blurContainer(container, meta = {}) {
     blurWrapper.className = "plot-armor-blur-wrapper";
 
     const isReddit = isRedditHost();
-    const childSnapshot = Array.from(container.childNodes);
+    const childSnapshot = Array.from(logical.childNodes);
     const skippedChildren = [];
 
     childSnapshot.forEach((node) => {
@@ -690,11 +1296,11 @@ function blurContainer(container, meta = {}) {
       }
     });
 
-    attachAtomicReveal(blurWrapper, container);
+    attachAtomicReveal(blurWrapper, logical);
 
-    container.appendChild(blurWrapper);
+    logical.appendChild(blurWrapper);
     // Re-attach nested comments after the wrapper so they remain independent.
-    skippedChildren.forEach((node) => container.appendChild(node));
+    skippedChildren.forEach((node) => logical.appendChild(node));
   }
 
   blurSurface.classList.add(BLUR_CLASS);
@@ -718,12 +1324,12 @@ function blurContainer(container, meta = {}) {
   overlay.style.setProperty("z-index", "2147483647", "important");
   overlay.style.setProperty("pointer-events", "auto", "important");
   // Store meta on the element so revealContainer can attach the report button after reveal.
-  container.dataset.paShow = meta.matchedShow || "";
-  container.dataset.paReason = meta.reason || "";
-  container.dataset.paConfidence = meta.confidence ?? "";
-  container.dataset.paSource = meta.source || "";
+  logical.dataset.paShow = meta.matchedShow || "";
+  logical.dataset.paReason = meta.reason || "";
+  logical.dataset.paConfidence = meta.confidence ?? "";
+  logical.dataset.paSource = meta.source || "";
 
-  attachAtomicReveal(overlay, container);
+  attachAtomicReveal(overlay, logical);
   blurSurface.appendChild(overlay);
 
   // Center within the blur surface (comment body on Reddit, full card elsewhere).
@@ -731,15 +1337,15 @@ function blurContainer(container, meta = {}) {
   overlay.style.left = "50%";
 
   debugLog("Blur applied", {
-    tag: container.tagName,
-    className: container.className,
-    textLength: extractContainerText(container).length,
+    tag: logical.tagName,
+    className: logical.className,
+    textLength: extractContainerText(logical).length,
   });
   void sendExtensionMessage({
     type: "BLUR_APPLIED",
-    textLength: extractContainerText(container).length,
-    tagName: container.tagName,
-    className: container.className,
+    textLength: extractContainerText(logical).length,
+    tagName: logical.tagName,
+    className: logical.className,
     href: location.href,
   }).catch(() => {});
 }
@@ -879,45 +1485,53 @@ function getSectionHint(container) {
 
 async function evaluateContainer(container) {
   if (!(container instanceof Element)) return;
-  if (container.getAttribute(PROCESSED_ATTR) === "1") return;
+  const logical = resolvePlotArmorContainer(container);
+  if (logical.getAttribute(PROCESSED_ATTR) === "1") return;
+  if (wasPlotArmorUserRevealed(logical)) {
+    logical.setAttribute(PROCESSED_ATTR, "1");
+    return;
+  }
 
-  const textToAnalyze = extractContainerText(container);
+  const evalGeneration = evaluationGeneration.get(logical) || 0;
+
+  const textToAnalyze = extractContainerText(logical);
   const isRedditComment =
     location.hostname.toLowerCase().includes("reddit.com") &&
-    (container.matches("shreddit-comment, [data-testid='comment'], [data-test-id='comment']") ||
-      String(container.getAttribute("thingid") || "").startsWith("t1_") ||
-      String(container.id || "").startsWith("comment-thing-"));
+    (logical.matches("shreddit-comment, [data-testid='comment'], [data-test-id='comment']") ||
+      String(logical.getAttribute("thingid") || "").startsWith("t1_") ||
+      String(logical.id || "").startsWith("comment-thing-"));
   const minLengthForContainer = isRedditComment ? 20 : MIN_TEXT_LENGTH;
 
   if (!textToAnalyze || textToAnalyze.length < minLengthForContainer) {
     // X hydrates tweet copy after mount; a first paint under MIN_TEXT_LENGTH used to mark
     // processed and skip blur forever. Retry a few times before giving up (TC#X-hydrate).
     if (isXHost()) {
-      const attempts = Number(container.dataset.paTextHydrationAttempts || "0");
+      const attempts = Number(logical.dataset.paTextHydrationAttempts || "0");
       const tooShort = !textToAnalyze || textToAnalyze.length < minLengthForContainer;
       const allowRetry =
         !textToAnalyze ||
         (textToAnalyze.length >= 5 && textToAnalyze.length < MIN_TEXT_LENGTH);
       if (attempts < 3 && tooShort && allowRetry) {
-        container.dataset.paTextHydrationAttempts = String(attempts + 1);
+        logical.dataset.paTextHydrationAttempts = String(attempts + 1);
         const delay = textToAnalyze ? 320 + attempts * 500 : 180 + attempts * 280;
         setTimeout(() => {
-          if (observersStopped || !container.isConnected) return;
-          if (container.getAttribute(PROCESSED_ATTR) === "1") return;
-          void evaluateContainer(container);
+          if (observersStopped || !logical.isConnected) return;
+          if (logical.getAttribute(PROCESSED_ATTR) === "1") return;
+          if (wasPlotArmorUserRevealed(logical)) return;
+          void evaluateContainer(logical);
         }, delay);
         return;
       }
     }
-    container.setAttribute(PROCESSED_ATTR, "1");
+    logical.setAttribute(PROCESSED_ATTR, "1");
     return;
   }
-  delete container.dataset.paTextHydrationAttempts;
+  delete logical.dataset.paTextHydrationAttempts;
 
   const analysisText = textToAnalyze.slice(0, MAX_ANALYZE_CHARS);
-  const sectionHint = isXHost() ? "" : getSectionHint(container);
-  const precedingContext = getPrecedingContext(container);
-  debugLog("Evaluating container", { textLength: textToAnalyze.length, tag: container.tagName, hasPrecedingContext: Boolean(precedingContext) });
+  const sectionHint = isXHost() ? "" : getSectionHint(logical);
+  const precedingContext = getPrecedingContext(logical);
+  debugLog("Evaluating container", { textLength: textToAnalyze.length, tag: logical.tagName, hasPrecedingContext: Boolean(precedingContext) });
 
   try {
     const response = await sendExtensionMessage({
@@ -925,7 +1539,7 @@ async function evaluateContainer(container) {
       textToAnalyze: analysisText,
       precedingContext,
       sectionHint,
-      containerTag: container.tagName,
+      containerTag: logical.tagName,
     });
     if (response == null) {
       debugLog("SEMANTIC_CHECK skipped: extension runtime unavailable", {});
@@ -933,11 +1547,13 @@ async function evaluateContainer(container) {
       debugLog("Semantic check response", response?.data || response);
     }
 
-    if (response?.ok && response.data?.isSpoiler) {
-      if (wasPlotArmorUserRevealed(container)) {
+    if (isStaleEvaluation(logical, evalGeneration)) {
+      debugLog("skip blur: stale evaluation after reveal", {});
+    } else if (response?.ok && response.data?.isSpoiler) {
+      if (wasPlotArmorUserRevealed(logical)) {
         debugLog("skip blur after reveal: in-flight check resolved late", {});
       } else {
-        blurContainer(container, {
+        blurContainer(logical, {
           matchedShow: response.data?.matchedShow || "",
           reason: response.data?.reason || "",
           confidence: response.data?.confidence ?? null,
@@ -955,14 +1571,19 @@ async function evaluateContainer(container) {
       console.error("Plot Armor semantic request failed", error);
     }
   } finally {
-    container.setAttribute(PROCESSED_ATTR, "1");
+    if (!isStaleEvaluation(logical, evalGeneration)) {
+      logical.setAttribute(PROCESSED_ATTR, "1");
+    }
   }
 }
 
 function pumpEvaluationQueue() {
   while (activeEvaluations < EVAL_CONCURRENCY_LIMIT && pendingEvaluationQueue.length) {
     const next = pendingEvaluationQueue.shift();
-    if (!next || !next.isConnected || next.getAttribute(PROCESSED_ATTR) === "1") continue;
+    if (!next || !next.isConnected) continue;
+    const logical = resolvePlotArmorContainer(next);
+    if (logical.getAttribute(PROCESSED_ATTR) === "1") continue;
+    if (wasPlotArmorUserRevealed(logical)) continue;
 
     activeEvaluations += 1;
     queuedContainers.delete(next);
@@ -975,7 +1596,9 @@ function pumpEvaluationQueue() {
 
 function enqueueEvaluation(container, priority = false) {
   if (!(container instanceof Element)) return;
-  if (container.getAttribute(PROCESSED_ATTR) === "1") return;
+  const logical = resolvePlotArmorContainer(container);
+  if (logical.getAttribute(PROCESSED_ATTR) === "1") return;
+  if (wasPlotArmorUserRevealed(logical)) return;
   if (queuedContainers.has(container)) {
     // Already queued — if now high priority, move to front.
     if (priority) {
@@ -1030,7 +1653,10 @@ const intersectionObserver = new IntersectionObserver(
 
 function observeContainer(container) {
   if (!(container instanceof Element)) return;
-  if (shouldSkipContainer(container)) return;
+  if (shouldSkipContainer(container)) {
+    cleanupObservedContainer(container);
+    return;
+  }
   if (observedContainers.has(container)) return;
   observedContainers.add(container);
   intersectionObserver.observe(container);
@@ -1062,6 +1688,10 @@ function shouldSkipContainer(container) {
   }
 
   if (location.hostname.toLowerCase().includes("reddit.com")) {
+    // Feed layout: <article data-post-id> wraps <shreddit-post>. Only observe the post.
+    if (container.matches("article") && container.querySelector("shreddit-post")) {
+      return true;
+    }
     // Avoid double-blur / double-reveal: shreddit wraps a card in <shreddit-post>
     // (or legacy article[data-testid=post-container]) and also exposes inner
     // <article> / div[data-click-id=body] that match the same candidate list.
@@ -1147,6 +1777,7 @@ const mutationObserver = new MutationObserver((mutations) => {
 });
 
 function resetAndReevaluate() {
+  redditUserRevealedKeys.clear();
   document.querySelectorAll(`[${USER_REVEALED_ATTR}]`).forEach((el) => {
     el.removeAttribute(USER_REVEALED_ATTR);
   });
@@ -1238,6 +1869,7 @@ function bootPlotArmor() {
     const root = document.body || document.documentElement;
     if (!root) return;
     plotArmorBooted = true;
+    installRedditEarlyRevealGuard();
     discoverContainers(document);
     mutationObserver.observe(root, { childList: true, subtree: true });
     setupSpaNavigationListener();

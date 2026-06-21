@@ -32,7 +32,7 @@ Current detector: `DETECTOR_VERSION` in `background.js` (cache keys include this
 
 ### Deterministic gates
 
-High-signal patterns can short-circuit to blur or hard-allow (e.g. relationship reveals, major spoiler cues with enough title context, speculative “leak” phrasing, narrow origin/injury reveal phrasing tied to a protected title). **Review/schedule meta** (`directed by`, `airs on Sunday`, `season finale review`, credits, air dates, etc.) hard-allows before the LLM when no plot-shaped overrides are present — including on Reddit/X, not only TMDB/Wikipedia show pages. **Sports commentary** (championship, finals, NBA/NFL teams, “your team”) hard-allows too; hyperbolic “kill each other” / “fighting” in that context is treated as trash-talk, not plot deaths. **Unreleased character reveals** (`first look at X in TITLE`, teaser/poster/trailer stills, leak/rumor phrasing, rumored matchups like `apparently we'll have X vs Y in TITLE`, footage analysis like `new footage from TITLE` / side-by-side comparisons / `X looks bigger in TITLE`) hard-block when the protected title matches — official promo and soft rumor phrasing are treated the same as leaks for “who shows up” / “what was shown” spoilers. Hard-block checks the **full post text**, not only the highest-risk snippet (short headlines were previously dropped). **Production/exhibition meta** (ScreenX, IMAX, “first film to be shot for…”) hard-allows; filming “shot” must not read as gun violence. **Box office speculation** (`realistic shot at $2 billion worldwide`, opening weekend / gross talk tied to a protected title) hard-allows too.
+High-signal patterns can short-circuit to blur or hard-allow (e.g. relationship reveals, major spoiler cues with enough title context, speculative “leak” phrasing, narrow origin/injury reveal phrasing tied to a protected title). **Review/schedule meta** (`directed by`, `airs on Sunday`, `season finale review`, credits, air dates, etc.) hard-allows before the LLM when no plot-shaped overrides are present — including on Reddit/X, not only TMDB/Wikipedia show pages. **Sports commentary** (championship, finals, NBA/NFL teams, “your team”) hard-allows too; hyperbolic “kill each other” / “fighting” in that context is treated as trash-talk, not plot deaths. **Unreleased character reveals** (`first look at X in TITLE`, teaser/poster/trailer stills, leak/rumor phrasing, rumored matchups like `apparently we'll have X vs Y in TITLE`, footage analysis like `new footage from TITLE` / side-by-side comparisons / `X looks bigger in TITLE`) hard-block when the protected title matches — official promo and soft rumor phrasing are treated the same as leaks for “who shows up” / “what was shown” spoilers. Hard-block checks the **full post text**, not only the highest-risk snippet (short headlines were previously dropped). **Production/exhibition meta** (ScreenX, IMAX, “first film to be shot for…”) hard-allows; filming “shot” must not read as gun violence. **Box office speculation** (`realistic shot at $2 billion worldwide`, opening weekend / gross talk tied to a protected title) hard-allows too. **Unrelated personal posts** (coding side projects, journaling apps, etc.) hard-allow when no protected title is mentioned — even if loose tier1 tokens or casual phrasing (`as it turns out`, `dead simple`) match.
 
 ### Tier 2 — semantic judge
 
@@ -51,7 +51,7 @@ High-signal patterns can short-circuit to blur or hard-allow (e.g. relationship 
 - **X/Twitter:** full-card veil (backdrop) so media stays covered.
 - **Quote tweets:** quoted-card text merged into the snippet sent for classification.
 - **Prefetch:** larger intersection margin (~1400px) + eager queueing for near-viewport nodes.
-- **Reddit:** reveal is **per comment** (no inheriting reveal from ancestors).
+- **Reddit:** reveal is **per comment** on threads; feed posts target `shreddit-post` (the wrapping `<article data-post-id>` shell is ignored so the card is not evaluated twice). **not a spoiler?** on feed posts is placed in the action row beside Share when possible.
 - **Virtualized feeds (X):** removed nodes are cleaned up (unobserve + queue).
 - **Edge cases:** `image/*` documents and missing `document.head` handled without throwing; if `chrome.runtime` disappears after extension reload, scanning stops quietly for that tab (refresh after reload).
 - **X “not a spoiler?” chip:** positioned via Grok control (`aria-label="Grok actions"`, English UI); CSS fallback offset if missing.
@@ -88,7 +88,7 @@ chrome.storage.local.set({ evalCache: {} });
 chrome.storage.local.set({ showContexts: {} });
 ```
 
-## Fixture regression (50 cases)
+## Fixture regression (62 cases)
 
 Fixed inputs in `tests/fixtures.json`; runner in `tests/run-fixtures.js`.
 
@@ -113,7 +113,7 @@ If `runPlotArmorFixtures is not defined`, the worker restarted — paste the scr
 **Notes:**
 
 - Hits the live semantic pipeline — consumes OpenAI quota.
-- A full 50-case run with `clearEvalCacheEachCase: true` can take tens of seconds.
+- A full 62-case run with `clearEvalCacheEachCase: true` can take tens of seconds.
 - Runner temporarily overrides sync show state per case and restores it in `finally`.
 
 ## Known limits (dev-facing)

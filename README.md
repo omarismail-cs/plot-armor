@@ -2,8 +2,6 @@
 
 Chrome extension that blurs likely spoilers while you browse. It combines local story-graph matching with an OpenAI semantic check so spoilers can still be caught when a show title is not spelled out.
 
-## Tech stack
-
 <p align="left">
   <img src="https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black" alt="JavaScript" />
   <img src="https://img.shields.io/badge/Chrome_Extension-Manifest_V3-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Chrome Extension (Manifest V3)" />
@@ -13,7 +11,14 @@ Chrome extension that blurs likely spoilers while you browse. It combines local 
   <img src="https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white" alt="CSS3" />
 </p>
 
-Also uses Chrome Storage API, `MutationObserver`, and `IntersectionObserver` for on-page scanning.
+## Tech stack
+
+- Chrome Extension (Manifest V3)
+- JavaScript
+- OpenAI Chat Completions API
+- TMDB API
+- Chrome Storage API (`sync` + `local`)
+- `MutationObserver` + `IntersectionObserver`
 
 ## Demo
 
@@ -48,7 +53,7 @@ Legacy: you can still use a local `.env` with `OPENAI_API_KEY` and `TMDB_READ_AC
 
 1. Open the popup, search TMDB, **select a row** (Add stays disabled until you do), click **Add**.
 2. Toggle shields per title, or use **pause all** / **enable all**.
-3. Browse as usual — Reddit, Wikipedia, X, etc. Blurred blocks can be revealed per click.
+3. Browse as usual — Reddit, Wikipedia, X, etc. Blurred blocks can be revealed per click. Use **not a spoiler?** on a revealed block, or **Options** → false positives, to report mistakes.
 
 ## Docs
 
