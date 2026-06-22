@@ -5,6 +5,8 @@ const FALSE_POSITIVES_KEY = "false_positives";
 const form = document.getElementById("optionsForm");
 const openaiKeyInput = document.getElementById("openaiKey");
 const tmdbTokenInput = document.getElementById("tmdbToken");
+const ingestUrlInput = document.getElementById("ingestUrl");
+const ingestKeyInput = document.getElementById("ingestKey");
 const clearBtn = document.getElementById("clearBtn");
 const statusDiv = document.getElementById("status");
 const reportsCountEl = document.getElementById("reportsCount");
@@ -19,7 +21,12 @@ const clearReportsOkBtn = document.getElementById("clearReportsOkBtn");
 
 async function loadSavedKeys() {
   try {
-    const result = await chrome.storage.local.get(["OPENAI_API_KEY", "TMDB_READ_ACCESS_TOKEN"]);
+    const result = await chrome.storage.local.get([
+      "OPENAI_API_KEY",
+      "TMDB_READ_ACCESS_TOKEN",
+      "FALSE_POSITIVE_INGEST_URL",
+      "FALSE_POSITIVE_INGEST_KEY",
+    ]);
 
     if (result.OPENAI_API_KEY) {
       openaiKeyInput.value = result.OPENAI_API_KEY;
@@ -27,6 +34,14 @@ async function loadSavedKeys() {
 
     if (result.TMDB_READ_ACCESS_TOKEN) {
       tmdbTokenInput.value = result.TMDB_READ_ACCESS_TOKEN;
+    }
+
+    if (result.FALSE_POSITIVE_INGEST_URL) {
+      ingestUrlInput.value = result.FALSE_POSITIVE_INGEST_URL;
+    }
+
+    if (result.FALSE_POSITIVE_INGEST_KEY) {
+      ingestKeyInput.value = result.FALSE_POSITIVE_INGEST_KEY;
     }
   } catch (error) {
     console.error("Error loading saved keys:", error);
@@ -210,9 +225,11 @@ form.addEventListener("submit", async (e) => {
 
   const openaiKey = openaiKeyInput.value.trim();
   const tmdbToken = tmdbTokenInput.value.trim();
+  const ingestUrl = ingestUrlInput.value.trim();
+  const ingestKey = ingestKeyInput.value.trim();
 
-  if (!openaiKey && !tmdbToken) {
-    showStatus("Please enter at least one API key", true);
+  if (!openaiKey && !tmdbToken && !ingestUrl && !ingestKey) {
+    showStatus("Please enter at least one setting", true);
     return;
   }
 
@@ -227,6 +244,14 @@ form.addEventListener("submit", async (e) => {
       dataToSave.TMDB_READ_ACCESS_TOKEN = tmdbToken;
     }
 
+    if (ingestUrl) {
+      dataToSave.FALSE_POSITIVE_INGEST_URL = ingestUrl;
+    }
+
+    if (ingestKey) {
+      dataToSave.FALSE_POSITIVE_INGEST_KEY = ingestKey;
+    }
+
     await chrome.storage.local.set(dataToSave);
     showStatus("✓ Settings saved successfully!");
   } catch (error) {
@@ -236,15 +261,22 @@ form.addEventListener("submit", async (e) => {
 });
 
 clearBtn.addEventListener("click", async () => {
-  if (!confirm("Are you sure you want to clear all saved API keys?")) {
+  if (!confirm("Clear all saved API keys and Supabase ingest settings?")) {
     return;
   }
 
   try {
-    await chrome.storage.local.remove(["OPENAI_API_KEY", "TMDB_READ_ACCESS_TOKEN"]);
+    await chrome.storage.local.remove([
+      "OPENAI_API_KEY",
+      "TMDB_READ_ACCESS_TOKEN",
+      "FALSE_POSITIVE_INGEST_URL",
+      "FALSE_POSITIVE_INGEST_KEY",
+    ]);
     openaiKeyInput.value = "";
     tmdbTokenInput.value = "";
-    showStatus("✓ API keys cleared");
+    ingestUrlInput.value = "";
+    ingestKeyInput.value = "";
+    showStatus("✓ Settings cleared");
   } catch (error) {
     console.error("Error clearing keys:", error);
     showStatus("Failed to clear keys. Please try again.", true);

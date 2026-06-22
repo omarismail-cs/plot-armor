@@ -47,7 +47,7 @@ Chrome extension that blurs likely spoilers while you browse. It combines local 
 - [OpenAI API key](https://platform.openai.com/api-keys) — semantic spoiler detection
 - [TMDB Read Access Token](https://www.themoviedb.org/settings/api) — search and metadata
 
-Legacy: you can still use a local `.env` with `OPENAI_API_KEY` and `TMDB_READ_ACCESS_TOKEN` (not committed).
+Legacy: you can still use a local `.env` (copy from `.env.example`; never commit `.env`) with `OPENAI_API_KEY`, `TMDB_READ_ACCESS_TOKEN`, and optional Supabase ingest keys.
 
 ## Usage
 

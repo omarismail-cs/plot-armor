@@ -6,13 +6,10 @@ const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
 const DETECTOR_VERSION = "v15.10";
 
-// --- False-positive feedback (Chrome Web Store) ---
-// 1) Deploy supabase/ (see supabase/README.md)
-// 2) Set URL to: https://<project-ref>.supabase.co/functions/v1/ingest-false-positive
-// 3) Set INGEST_KEY to the same value as Supabase secret PLOT_ARMOR_INGEST_SECRET
-const FALSE_POSITIVE_INGEST_URL =
-  "https://cezsqhodmuvwmhvsjpdn.supabase.co/functions/v1/ingest-false-positive";
-const FALSE_POSITIVE_INGEST_KEY = "sgGvpA0aqhfr1gxm6+IfzUUu7qsB08drfycp8s8REQs="; // same string as PLOT_ARMOR_INGEST_SECRET (set after supabase secrets set)
+// --- False-positive feedback (optional Supabase ingest) ---
+// Configure in Extension options or local .env (see .env.example). Never commit secrets.
+const FALSE_POSITIVE_INGEST_URL_KEY = "FALSE_POSITIVE_INGEST_URL";
+const FALSE_POSITIVE_INGEST_SECRET_KEY = "FALSE_POSITIVE_INGEST_KEY";
 
 // Keep local copies for the options-page list AND post to Supabase ingest when configured.
 const KEEP_LOCAL_FALSE_POSITIVE_COPIES = true;
@@ -571,12 +568,61 @@ function debugLog(message, payload) {
   else console.info(message);
 }
 
+async function loadEnvFileMap() {
+  const entries = {};
+  try {
+    const response = await fetch(chrome.runtime.getURL(".env"));
+    if (!response.ok) return entries;
+    const envText = await response.text();
+    for (const line of envText.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex === -1) continue;
+      const key = trimmed.slice(0, separatorIndex).trim();
+      let value = trimmed.slice(separatorIndex + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (key) entries[key] = value;
+    }
+  } catch (_) {
+    /* no local .env in unpacked build */
+  }
+  return entries;
+}
+
+async function loadFalsePositiveIngestConfig() {
+  let url = "";
+  let key = "";
+  try {
+    const stored = await chrome.storage.local.get([
+      FALSE_POSITIVE_INGEST_URL_KEY,
+      FALSE_POSITIVE_INGEST_SECRET_KEY,
+    ]);
+    url = String(stored[FALSE_POSITIVE_INGEST_URL_KEY] || "").trim();
+    key = String(stored[FALSE_POSITIVE_INGEST_SECRET_KEY] || "").trim();
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} Failed to load ingest config from storage`, error);
+  }
+
+  if (!url || !key) {
+    const env = await loadEnvFileMap();
+    if (!url) url = String(env[FALSE_POSITIVE_INGEST_URL_KEY] || "").trim();
+    if (!key) key = String(env[FALSE_POSITIVE_INGEST_SECRET_KEY] || "").trim();
+  }
+
+  return { url, key };
+}
+
 async function ingestFalsePositiveReport(report) {
-  const url = String(FALSE_POSITIVE_INGEST_URL || "").trim();
+  const { url, key: ingestKey } = await loadFalsePositiveIngestConfig();
   if (!url) return false;
 
   const headers = { "Content-Type": "application/json" };
-  const ingestKey = String(FALSE_POSITIVE_INGEST_KEY || "").trim();
   if (ingestKey) {
     headers["x-plot-armor-ingest-key"] = ingestKey;
   }

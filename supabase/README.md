@@ -1,6 +1,8 @@
 # Plot Armor → Supabase false-positive ingest
 
-When a user clicks **“not a spoiler?”**, the extension POSTs the report to a Supabase Edge Function, which inserts a row you can browse in the Supabase dashboard (or SQL).
+When a user clicks **“not a spoiler?”**, the extension can POST the report to a Supabase Edge Function, which inserts a row you can browse in the Supabase dashboard (or SQL).
+
+**Do not commit ingest secrets.** Configure URL + secret in **Extension options** or a local `.env` (see `.env.example`).
 
 ## 1. Create table
 
@@ -35,13 +37,12 @@ https://YOUR_PROJECT_REF.supabase.co/functions/v1/ingest-false-positive
 
 ## 3. Wire the extension
 
-In `background.js`, set:
+Right-click the extension → **Options** (or **Extension options** on `chrome://extensions`):
 
-```javascript
-const FALSE_POSITIVE_INGEST_URL =
-  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/ingest-false-positive";
-const FALSE_POSITIVE_INGEST_KEY = "your-long-random-secret-here"; // same as PLOT_ARMOR_INGEST_SECRET
-```
+- **Supabase ingest URL** — the function URL above
+- **Supabase ingest secret** — same string as `PLOT_ARMOR_INGEST_SECRET`
+
+For local unpacked dev you can instead copy `.env.example` → `.env` and fill in `FALSE_POSITIVE_INGEST_URL` / `FALSE_POSITIVE_INGEST_KEY`.
 
 `manifest.json` already includes `https://*.supabase.co/*`.
 
@@ -64,8 +65,18 @@ limit 50;
 
 ## Privacy (Chrome Web Store)
 
-Disclose that optional feedback may include page URL and a text snippet. With ingest enabled, reports are **not** stored locally on the user's device by default.
+Disclose that optional feedback may include page URL and a text snippet. With ingest enabled, reports are still stored locally when `KEEP_LOCAL_FALSE_POSITIVE_COPIES` is true (default in `background.js`).
 
 ## Local dev without Supabase
 
-Leave `FALSE_POSITIVE_INGEST_URL` empty. Reports save locally; open **Extension options** to view/export.
+Leave ingest URL blank. Reports save locally; open **Extension options** to view/export.
+
+## If a secret was ever committed to git
+
+Rotate immediately:
+
+```bash
+supabase secrets set PLOT_ARMOR_INGEST_SECRET=NEW-long-random-secret
+```
+
+Then update **Extension options** (or `.env`). Old secrets remain in git history — treat them as compromised.

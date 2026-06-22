@@ -165,7 +165,8 @@
       margin-bottom: 8px;
     }
 
-    input[type="password"] {
+    input[type="password"],
+    input[type="text"] {
       width: 100%;
       height: 40px;
       border-radius: var(--radius);
@@ -180,12 +181,14 @@
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
 
-    input[type="password"]::placeholder {
+    input[type="password"]::placeholder,
+    input[type="text"]::placeholder {
       color: var(--muted-foreground);
       opacity: 0.7;
     }
 
-    input[type="password"]:focus {
+    input[type="password"]:focus,
+    input[type="text"]:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent);
     }
@@ -607,6 +610,34 @@
             </p>
           </div>
 
+          <div class="form-group">
+            <label for="ingestUrl">Supabase ingest URL <span style="font-weight:500;color:var(--muted-foreground)">(optional)</span></label>
+            <input
+              type="text"
+              id="ingestUrl"
+              placeholder="https://YOUR_PROJECT.supabase.co/functions/v1/ingest-false-positive"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <p class="hint">
+              For your own false-positive pipeline. Leave blank to keep reports local only.
+              See <a href="https://github.com/omar_ismail-cs/plot-armor/blob/main/supabase/README.md" target="_blank">supabase/README.md</a>.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label for="ingestKey">Supabase ingest secret <span style="font-weight:500;color:var(--muted-foreground)">(optional)</span></label>
+            <input
+              type="password"
+              id="ingestKey"
+              placeholder="same as PLOT_ARMOR_INGEST_SECRET"
+              autocomplete="off"
+            />
+            <p class="hint">
+              Must match your Supabase Edge Function secret. Never commit this to git.
+            </p>
+          </div>
+
           <div class="button-group">
             <button type="submit" class="btn-save">Save Settings</button>
             <button type="button" id="clearBtn" class="btn-clear">Clear Keys</button>
@@ -620,7 +651,7 @@
         <section id="reportsSection" aria-labelledby="reportsHeading">
           <h2 id="reportsHeading" class="section-heading">false positive reports</h2>
           <p class="section-note" id="reportsSectionNote">
-            “Not a spoiler?” saves here and posts to your Supabase
+            “Not a spoiler?” saves here. If Supabase ingest is configured above, reports are also POSTed to your
             <code>false_positive_reports</code> table.
           </p>
 
@@ -649,7 +680,7 @@
 
       <div class="footer">
         <p class="footer-text">
-          Keys are stored locally in your browser and never sent to any server except OpenAI and TMDB.
+          Keys and ingest settings are stored locally in your browser. OpenAI/TMDB keys are sent only to those APIs; Supabase ingest uses your configured URL when set.
         </p>
       </div>
     </div>

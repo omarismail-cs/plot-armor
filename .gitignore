@@ -1,6 +1,7 @@
 # Environment and secrets
 .env
 .env.*
+!.env.example
 *.local
 
 # Node dependencies and logs
@@ -15,6 +16,10 @@ dist/
 build/
 out/
 
+# Supabase CLI local cache (linked project, version pins, etc.)
+supabase/.temp/
+supabase/.branches/
+
 # v0 / design exports (reference only; UI lives in popup.html)
 v0-export/
 
@@ -23,3 +28,4 @@ v0-export/
 Thumbs.db
 .vscode/
 .idea/
+.cursor/
