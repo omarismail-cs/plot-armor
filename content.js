@@ -15,6 +15,109 @@ const FALLBACK_EXCLUDE_SELECTOR =
 const REDDIT_COMMENT_SELECTOR =
   "shreddit-comment, [data-testid='comment'], [data-test-id='comment'], article[thingid^='t1_'], div[id^='comment-thing-']";
 
+/** App / tool surfaces — not “scroll other people’s posts”. */
+const PLOT_ARMOR_EXCLUDED_HOST_SUFFIXES = [
+  "chatgpt.com",
+  "chat.openai.com",
+  "claude.ai",
+  "gemini.google.com",
+  "copilot.microsoft.com",
+  "perplexity.ai",
+  "notion.so",
+  "slack.com",
+  "discord.com",
+  "figma.com",
+  "linear.app",
+  "trello.com",
+  "atlassian.net",
+];
+
+const PLOT_ARMOR_EXCLUDED_HOST_PREFIXES = [
+  "mail.",
+  "docs.",
+  "drive.",
+  "calendar.",
+  "meet.",
+  "admin.",
+  "app.",
+];
+
+const PLOT_ARMOR_EXCLUDED_PATH_RE =
+  /^\/(chat|c|compose|inbox|mail|login|signin|signup|account|settings|admin|dashboard)(\/|$)/i;
+
+function hostMatchesSuffix(hostname, suffix) {
+  const host = String(hostname || "").toLowerCase();
+  const base = String(suffix || "").toLowerCase();
+  return host === base || host.endsWith(`.${base}`);
+}
+
+function isPlotArmorExcludedHost() {
+  const host = location.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".local")) return true;
+  if (PLOT_ARMOR_EXCLUDED_HOST_PREFIXES.some((prefix) => host.startsWith(prefix))) return true;
+  return PLOT_ARMOR_EXCLUDED_HOST_SUFFIXES.some((suffix) => hostMatchesSuffix(host, suffix));
+}
+
+function isPlotArmorExcludedPath() {
+  return PLOT_ARMOR_EXCLUDED_PATH_RE.test(location.pathname || "");
+}
+
+/** First-class feed targets (custom selectors). */
+function isPlotArmorSupportedHost() {
+  const host = location.hostname.toLowerCase();
+  return (
+    host.includes("reddit.com") ||
+    host.includes("twitter.com") ||
+    host.includes("x.com") ||
+    host.includes("wikipedia.org")
+  );
+}
+
+/** Chat / compose UIs: big contenteditable or textarea in view — not spoiler feeds. */
+function isPrimaryChatOrComposerUi() {
+  if (!(document.body instanceof Element)) return false;
+  const composerSel = [
+    '[contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"][data-placeholder]',
+    '[contenteditable="plaintext-only"]',
+    "textarea[placeholder]",
+    '[aria-label*="message" i][contenteditable="true"]',
+    "form textarea",
+  ].join(", ");
+  const viewHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
+  for (const el of document.querySelectorAll(composerSel)) {
+    if (!(el instanceof Element)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 120 || rect.height < 24) continue;
+    if (rect.bottom > 0 && rect.top < viewHeight) return true;
+  }
+  return false;
+}
+
+/** Article / post-shaped read-only pages (news, blogs) — safe generic target. */
+function isLikelyReadOnlyContentPage() {
+  const ogType = document.querySelector('meta[property="og:type"]')?.getAttribute("content") || "";
+  if (/^article$/i.test(ogType)) return true;
+
+  for (const el of document.querySelectorAll("article, [role='article']")) {
+    const text = (el.innerText || "").replace(/\s+/g, " ").trim();
+    if (text.length >= MIN_TEXT_LENGTH) return true;
+  }
+  return false;
+}
+
+/**
+ * Run only where users read third-party posts/articles — not in app/chat UIs.
+ * Known feeds always on; other sites only if article-shaped and no composer detected.
+ */
+function shouldActivatePlotArmor() {
+  if (isPlotArmorExcludedHost()) return false;
+  if (isPlotArmorExcludedPath()) return false;
+  if (isPlotArmorSupportedHost()) return true;
+  if (isPrimaryChatOrComposerUi()) return false;
+  return isLikelyReadOnlyContentPage();
+}
+
 let missingExtensionRuntimeLogged = false;
 
 /** MV3 content scripts normally have chrome.runtime; it can be missing after disable/reload races or in odd frames. */
@@ -138,7 +241,8 @@ function getCandidateSelector() {
       "[id='mw-content-text'] .mw-parser-output td.description",
     ].join(", ");
   }
-  return "article, [role='article'], main p";
+  // Generic news/blog: article cards only — never `main p` (breaks app UIs).
+  return "article, [role='article']";
 }
 
 function injectStyles() {
@@ -1721,6 +1825,7 @@ function shouldSkipContainer(container) {
 }
 
 function discoverContainers(root = document) {
+  if (!shouldActivatePlotArmor()) return;
   if (!(root instanceof Element || root instanceof Document)) return;
   const candidateSelector = getCandidateSelector();
 
@@ -1858,6 +1963,7 @@ let plotArmorBooted = false;
 
 function bootPlotArmor() {
   if (plotArmorBooted) return;
+  if (!shouldActivatePlotArmor()) return;
   if (typeof document === "undefined" || !document.documentElement) return;
   const ct = document.contentType || "";
   if (/^image\//i.test(ct)) return;
