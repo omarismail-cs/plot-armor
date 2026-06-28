@@ -58,7 +58,7 @@ async function runPlotArmorFixtures(options = {}) {
         textToAnalyze: String(f.text || ""),
         sectionHint: String(f.sectionHint || ""),
         precedingContext: String(f.precedingContext || ""),
-        containerTag: "FIXTURE",
+        containerTag: String(f.containerTag || "FIXTURE"),
       };
       // In service-worker console, call the function directly.
       // Fallback to runtime messaging when run from another extension context.

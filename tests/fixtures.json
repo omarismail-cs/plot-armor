@@ -399,5 +399,12 @@
     "protectedShows": ["Daredevil: Born Again"],
     "text": "It is written into the Spidey contract with Sony that two MCU characters have to appear in the movies. I'm pretty sure you just made that up.",
     "expectedSpoiler": false
+  },
+  {
+    "id": "PA-063",
+    "protectedShows": ["Spider-Man: Brand New Day"],
+    "text": "The Brian Theory - How Repeat Visits May Save Supergirl DISCUSSION NOTE: I am aware this theory is based on anecdotal evidence. Also, I've only met James Gunn once, and he was very upset that I bothered him while he was trying to board his flight. Okay, the opening weekend numbers do NOT look good. However, I don't think we can completely write the film off until we see the second and third weekend holds.",
+    "expectedSpoiler": false,
+    "containerTag": "SHREDDIT-POST"
   }
 ]

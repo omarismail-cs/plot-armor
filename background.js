@@ -4,7 +4,7 @@ const LOG_PREFIX = "[Plot Armor background]";
 const DEBUG = false;
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v15.10";
+const DETECTOR_VERSION = "v15.11";
 
 // --- False-positive feedback (optional Supabase ingest) ---
 // Configure in Extension options or local .env (see .env.example). Never commit secrets.
@@ -102,7 +102,7 @@ function isBoxOfficeDiscussionContext(text) {
 function canHardAllowBoxOfficeDiscussion(text, protectedShows) {
   const t = String(text || "");
   if (!isBoxOfficeDiscussionContext(t)) return false;
-  if (!protectedShowTitleInText(t, protectedShows)) return false;
+  // Opening-weekend / gross chatter about another title is not plot for protected shows.
   if (SIGNAL_PATTERNS.relationshipReveal.test(t)) return false;
   if (SIGNAL_PATTERNS.twistIdentity.test(t)) return false;
   if (SIGNAL_PATTERNS.speculativeLeak.test(t)) return false;
@@ -1641,7 +1641,26 @@ function computeDeterministicSignals({
   if (looksLikeNonSpoilerContext) riskScore -= 0.2;
   if (looksLikeCastingAnnouncement) riskScore -= 0.2;
 
-  if (hasRelationshipReveal && strongestTier1MatchCount >= 1) {
+  const titleAnchoredForHardBlock =
+    protectedShowTitleInText(text, matchedShows) ||
+    protectedShowTitleInText(fullText, matchedShows) ||
+    hasStrongTier1Anchor(tier1ByShow, matchedShows) ||
+    deathNameHitCount > 0;
+
+  if (
+    canHardAllowBoxOfficeDiscussion(text, protectedShows) ||
+    canHardAllowBoxOfficeDiscussion(fullText, protectedShows)
+  ) {
+    return makeDeterministicHardAllow("deterministic-box-office", riskScore);
+  }
+
+  if (
+    hasRelationshipReveal &&
+    strongestTier1MatchCount >= 1 &&
+    titleAnchoredForHardBlock &&
+    !isBoxOfficeDiscussionContext(text) &&
+    !isBoxOfficeDiscussionContext(fullText)
+  ) {
     return makeDeterministicHardBlock("deterministic-relationship-reveal", riskScore, 0.85);
   }
 
@@ -1655,10 +1674,6 @@ function computeDeterministicSignals({
 
   if (canHardAllowProductionExhibition(text)) {
     return makeDeterministicHardAllow("deterministic-production-exhibition", riskScore);
-  }
-
-  if (canHardAllowBoxOfficeDiscussion(text, protectedShows)) {
-    return makeDeterministicHardAllow("deterministic-box-office", riskScore);
   }
 
   if (canHardAllowUnrelatedPersonalPost(text, protectedShows)) {
@@ -1676,12 +1691,6 @@ function computeDeterministicSignals({
   if (canHardAllowPromoTrailer(text, protectedShows)) {
     return makeDeterministicHardAllow("deterministic-promo-trailer", riskScore);
   }
-
-  const titleAnchoredForHardBlock =
-    protectedShowTitleInText(text, matchedShows) ||
-    protectedShowTitleInText(fullText, matchedShows) ||
-    hasStrongTier1Anchor(tier1ByShow, matchedShows) ||
-    deathNameHitCount > 0;
 
   if (
     (hasMajorCue || hasTwistIdentity || hasOriginReveal) &&
