@@ -4,17 +4,33 @@ const LOG_PREFIX = "[Plot Armor background]";
 const DEBUG = false;
 const SPOILER_CONFIDENCE_THRESHOLD = 0.58;
 const MIN_CONFIDENCE_FLOOR = 0.4;
-const DETECTOR_VERSION = "v15.11";
+const DETECTOR_VERSION = "v15.12";
 
-// --- False-positive feedback (optional Supabase ingest) ---
-// Configure in Extension options or local .env (see .env.example). Never commit secrets.
+// --- False-positive feedback → Supabase ingest (URL + secret from gitignored .env only) ---
 const FALSE_POSITIVE_INGEST_URL_KEY = "FALSE_POSITIVE_INGEST_URL";
 const FALSE_POSITIVE_INGEST_SECRET_KEY = "FALSE_POSITIVE_INGEST_KEY";
 
-// Keep local copies for the options-page list AND post to Supabase ingest when configured.
+// Keep local copies for the options-page list AND post to Supabase ingest when .env is configured.
 const KEEP_LOCAL_FALSE_POSITIVE_COPIES = true;
 
+let cachedIngestConfig = null;
+
 const FALSE_POSITIVES_KEY = "false_positives";
+const METRICS_KEY = "pa_metrics";
+const METRICS_ENABLED = true;
+const METRICS_FLUSH_EVERY = 100;
+const METRICS_FLUSH_MS = 5000;
+const EVAL_CACHE_FLUSH_EVERY = 25;
+const EVAL_CACHE_FLUSH_MS = 2500;
+
+let metricsCache = null;
+let metricsDirty = false;
+let metricsFlushTimer = null;
+let metricsChecksSinceFlush = 0;
+let evalCacheMemory = null;
+let evalCacheDirty = false;
+let evalCacheFlushTimer = null;
+let evalCachePendingWrites = 0;
 const SIGNAL_PATTERNS = {
   majorSpoilerCues:
     /\b(dies|death|kill(?:s|ed|ing)?|killed|murder(?:ed|s)|shot|shooting|assassinated|betray(?:ed|al)|ending|finale|resurrection|returns?|was behind|turns out|secret identity|twist|fate|killed off|identity is revealed|reveal(?:s|ed|ing)?|impersonates?|frame(?:d|s)?|exposes?|reconcile(?:s|d)?|reopen(?:s|ed)?|incarcerated|imprisoned|collapse(?:d)?|fails?|abandon(?:ed|s)?|leaves?|written out|turning point|breakthrough|acquire(?:s|d)?|multiversal|multiverse|other universes|universes|variants?|sacred timeline|citadel|timeline breaks|branch\s+timelines?|earlier timelines|time heist|infinity stones|passes the shield|stays in the past|forgets?|forgot|forgetting|deceiv(?:e(?:s|d)?|ing)|disguised|regains?|suppress(?:ed|es|ing)?|steps into|reshapes?|genosha|cali\s+cartel|escapes?|escaped|escaping|consolidat\w*|hideouts?|sandworm|duel(?:ing|s)?|fight(?:s|ing)?|rifts?|kneel(?:s|ed|ing)?|reunites?|reunited|canon events|cliffhanger|spider[- ]society|spider[- ]people|wall[- ]crawlers?|alternate\s+Peter|Peter Parkers)\b/i,
@@ -61,6 +77,7 @@ function releaseServiceWorkerKeepAlive() {
   if (swKeepAliveRefs > 0 || swKeepAliveTimer == null) return;
   clearInterval(swKeepAliveTimer);
   swKeepAliveTimer = null;
+  void flushLocalPersistedState(true);
 }
 
 /** "killed my confidence" etc. — not character death. */
@@ -568,6 +585,199 @@ function debugLog(message, payload) {
   else console.info(message);
 }
 
+function defaultMetrics() {
+  return {
+    startedAt: new Date().toISOString(),
+    detectorVersion: DETECTOR_VERSION,
+    totalChecks: 0,
+    cacheHits: 0,
+    llmChecks: 0,
+    llmCalls: 0,
+    bySource: {},
+  };
+}
+
+function metricsBucket(verdict) {
+  const source = String(verdict?.source || "").trim();
+  if (source) return source;
+  const reason = String(verdict?.reason || "").trim();
+  if (reason) return reason;
+  return "unknown";
+}
+
+function pct(numerator, denominator) {
+  if (!denominator) return 0;
+  return Math.round((numerator / denominator) * 1000) / 10;
+}
+
+function summarizeMetrics(metrics) {
+  const m = metrics || defaultMetrics();
+  const total = m.totalChecks || 0;
+  const llmChecks = m.llmChecks || 0;
+  const cacheHits = m.cacheHits || 0;
+  const localResolved = total - llmChecks;
+  return {
+    ...m,
+    localInterceptPct: pct(localResolved, total),
+    cacheHitPct: pct(cacheHits, total),
+    llmCheckPct: pct(llmChecks, total),
+  };
+}
+
+async function loadMetricsFromStorage() {
+  try {
+    const stored = await chrome.storage.local.get([METRICS_KEY]);
+    const raw = stored[METRICS_KEY];
+    if (!raw || typeof raw !== "object") return defaultMetrics();
+    if (raw.detectorVersion !== DETECTOR_VERSION) return defaultMetrics();
+    return {
+      ...defaultMetrics(),
+      ...raw,
+      bySource: raw.bySource && typeof raw.bySource === "object" ? { ...raw.bySource } : {},
+    };
+  } catch {
+    return defaultMetrics();
+  }
+}
+
+async function flushLocalPersistedState(force = false) {
+  const shouldFlushMetrics =
+    METRICS_ENABLED &&
+    metricsDirty &&
+    metricsCache &&
+    (force || metricsChecksSinceFlush >= METRICS_FLUSH_EVERY);
+  const shouldFlushEvalCache =
+    evalCacheDirty && evalCacheMemory && (force || evalCachePendingWrites >= EVAL_CACHE_FLUSH_EVERY);
+
+  if (!shouldFlushMetrics && !shouldFlushEvalCache) return;
+
+  const payload = {};
+  if (shouldFlushMetrics) {
+    payload[METRICS_KEY] = metricsCache;
+    metricsDirty = false;
+    metricsChecksSinceFlush = 0;
+    if (metricsFlushTimer) {
+      clearTimeout(metricsFlushTimer);
+      metricsFlushTimer = null;
+    }
+  }
+  if (shouldFlushEvalCache) {
+    payload[EVAL_CACHE_KEY] = evalCacheMemory;
+    evalCacheDirty = false;
+    evalCachePendingWrites = 0;
+    if (evalCacheFlushTimer) {
+      clearTimeout(evalCacheFlushTimer);
+      evalCacheFlushTimer = null;
+    }
+  }
+
+  try {
+    await chrome.storage.local.set(payload);
+  } catch (error) {
+    console.warn(`${LOG_PREFIX} local persistence flush failed`, error);
+  }
+}
+
+async function flushMetrics(force = false) {
+  await flushLocalPersistedState(force);
+}
+
+function scheduleMetricsFlush() {
+  if (!METRICS_ENABLED) return;
+  if (metricsChecksSinceFlush >= METRICS_FLUSH_EVERY) {
+    void flushLocalPersistedState(true);
+    return;
+  }
+  if (!metricsFlushTimer) {
+    metricsFlushTimer = setTimeout(() => {
+      metricsFlushTimer = null;
+      void flushLocalPersistedState(true);
+    }, METRICS_FLUSH_MS);
+  }
+}
+
+async function recordCheckMetric(verdict, llmCalls = 0) {
+  if (!METRICS_ENABLED) return;
+
+  if (!metricsCache) {
+    metricsCache = await loadMetricsFromStorage();
+  }
+
+  const bucket = metricsBucket(verdict);
+  metricsCache.totalChecks += 1;
+  metricsCache.bySource[bucket] = (metricsCache.bySource[bucket] || 0) + 1;
+  if (bucket === "cache-hit") {
+    metricsCache.cacheHits += 1;
+  }
+  if (llmCalls > 0) {
+    metricsCache.llmChecks += 1;
+    metricsCache.llmCalls += llmCalls;
+  }
+
+  metricsDirty = true;
+  metricsChecksSinceFlush += 1;
+  scheduleMetricsFlush();
+}
+
+async function getMetricsSummary() {
+  await flushLocalPersistedState(true);
+  const stored = metricsCache || (await loadMetricsFromStorage());
+  return summarizeMetrics(stored);
+}
+
+async function resetMetrics() {
+  metricsCache = defaultMetrics();
+  metricsDirty = false;
+  metricsChecksSinceFlush = 0;
+  if (metricsFlushTimer) {
+    clearTimeout(metricsFlushTimer);
+    metricsFlushTimer = null;
+  }
+  await chrome.storage.local.set({ [METRICS_KEY]: metricsCache });
+  return summarizeMetrics(metricsCache);
+}
+
+async function ensureEvalCacheLoaded() {
+  if (evalCacheMemory) return evalCacheMemory;
+  try {
+    const stored = await chrome.storage.local.get([EVAL_CACHE_KEY]);
+    evalCacheMemory =
+      stored[EVAL_CACHE_KEY] && typeof stored[EVAL_CACHE_KEY] === "object" ? stored[EVAL_CACHE_KEY] : {};
+  } catch {
+    evalCacheMemory = {};
+  }
+  return evalCacheMemory;
+}
+
+async function flushEvalCache(force = false) {
+  await flushLocalPersistedState(force);
+}
+
+function clearEvalCacheMemory() {
+  evalCacheMemory = {};
+  evalCacheDirty = false;
+  evalCachePendingWrites = 0;
+  if (evalCacheFlushTimer) {
+    clearTimeout(evalCacheFlushTimer);
+    evalCacheFlushTimer = null;
+  }
+}
+
+function scheduleEvalCacheFlush() {
+  evalCacheDirty = true;
+  evalCachePendingWrites += 1;
+  if (evalCachePendingWrites >= EVAL_CACHE_FLUSH_EVERY) {
+    void flushLocalPersistedState(true);
+    return;
+  }
+  if (!evalCacheFlushTimer) {
+    evalCacheFlushTimer = setTimeout(() => {
+      evalCacheFlushTimer = null;
+      void flushLocalPersistedState(true);
+    }, EVAL_CACHE_FLUSH_MS);
+  }
+}
+
 async function loadEnvFileMap() {
   const entries = {};
   try {
@@ -596,26 +806,13 @@ async function loadEnvFileMap() {
 }
 
 async function loadFalsePositiveIngestConfig() {
-  let url = "";
-  let key = "";
-  try {
-    const stored = await chrome.storage.local.get([
-      FALSE_POSITIVE_INGEST_URL_KEY,
-      FALSE_POSITIVE_INGEST_SECRET_KEY,
-    ]);
-    url = String(stored[FALSE_POSITIVE_INGEST_URL_KEY] || "").trim();
-    key = String(stored[FALSE_POSITIVE_INGEST_SECRET_KEY] || "").trim();
-  } catch (error) {
-    console.warn(`${LOG_PREFIX} Failed to load ingest config from storage`, error);
-  }
-
-  if (!url || !key) {
-    const env = await loadEnvFileMap();
-    if (!url) url = String(env[FALSE_POSITIVE_INGEST_URL_KEY] || "").trim();
-    if (!key) key = String(env[FALSE_POSITIVE_INGEST_SECRET_KEY] || "").trim();
-  }
-
-  return { url, key };
+  if (cachedIngestConfig) return cachedIngestConfig;
+  const env = await loadEnvFileMap();
+  cachedIngestConfig = {
+    url: String(env[FALSE_POSITIVE_INGEST_URL_KEY] || "").trim(),
+    key: String(env[FALSE_POSITIVE_INGEST_SECRET_KEY] || "").trim(),
+  };
+  return cachedIngestConfig;
 }
 
 async function ingestFalsePositiveReport(report) {
@@ -1729,7 +1926,9 @@ function computeDeterministicSignals({
   if (canHardAllowFranchiseBusinessMeta(text) || canHardAllowFranchiseBusinessMeta(fullText)) {
     return makeDeterministicHardAllow("deterministic-franchise-business-meta", riskScore);
   }
-  if (unreleasedMediaReveal && titleAnchored && !hasRelationshipReveal && !hasTwistIdentity) {
+  const showTitleInScope =
+    protectedShowTitleInText(text, matchedShows) || protectedShowTitleInText(fullText, matchedShows);
+  if (unreleasedMediaReveal && showTitleInScope && !hasRelationshipReveal && !hasTwistIdentity) {
     return makeDeterministicHardBlock("deterministic-unreleased-character-reveal", riskScore, 0.82);
   }
 
@@ -1826,18 +2025,30 @@ function pickBestEvaluationText(text, matchedShows, showContexts) {
   return bestSnippet;
 }
 
-async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = "", containerTag = "", precedingContext = "") {
+async function handleSemanticCheck(
+  textToAnalyze,
+  pageUrl = "",
+  sectionHint = "",
+  containerTag = "",
+  precedingContext = "",
+  protectedShowsOverride = null
+) {
   acquireServiceWorkerKeepAlive();
+  let llmCalls = 0;
+  const finishCheck = (verdict, { countable = true } = {}) => {
+    if (countable) void recordCheckMetric(verdict, llmCalls);
+    return verdict;
+  };
   try {
   const originalText = String(textToAnalyze || "").trim();
   const text = originalText;
   if (!text) {
     debugLog(`${LOG_PREFIX} SEMANTIC_CHECK skipped empty text`);
-    return { isSpoiler: false, reason: "empty-text" };
+    return finishCheck({ isSpoiler: false, reason: "empty-text" }, { countable: false });
   }
 
   if (isDeterministicNonFictionSnippet(text)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.02,
       reason: "deterministic-nonfiction-copy",
@@ -1845,14 +2056,14 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier0-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   const precedingTrim = String(precedingContext || "").trim();
   const tier0Scope = [precedingTrim, text].filter(Boolean).join("\n\n");
 
   if (canHardAllowSportsCommentary(tier0Scope)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-sports-commentary",
@@ -1860,11 +2071,11 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier0-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   if (canHardAllowProductionExhibition(tier0Scope)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-production-exhibition",
@@ -1872,28 +2083,32 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier0-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
-  const [local, sync] = await Promise.all([
-    chrome.storage.local.get([SHOW_CONTEXTS_KEY, EVAL_CACHE_KEY]),
-    chrome.storage.sync.get(["protectedShows", "activeProtectedShows"]),
-  ]);
-
+  const local = await chrome.storage.local.get([SHOW_CONTEXTS_KEY]);
   const showContexts = local[SHOW_CONTEXTS_KEY] || {};
-  const evalCache = local[EVAL_CACHE_KEY] || {};
-  const allProtectedShows = Array.isArray(sync.protectedShows) ? sync.protectedShows : [];
-  const activeMap = (sync.activeProtectedShows && typeof sync.activeProtectedShows === "object")
-    ? sync.activeProtectedShows
-    : {};
-  const protectedShows = allProtectedShows.filter((show) => activeMap[show] !== false);
+  const evalCache = await ensureEvalCacheLoaded();
+
+  let protectedShows;
+  if (Array.isArray(protectedShowsOverride) && protectedShowsOverride.length) {
+    protectedShows = protectedShowsOverride;
+  } else {
+    const sync = await chrome.storage.sync.get(["protectedShows", "activeProtectedShows"]);
+    const allProtectedShows = Array.isArray(sync.protectedShows) ? sync.protectedShows : [];
+    const activeMap =
+      sync.activeProtectedShows && typeof sync.activeProtectedShows === "object"
+        ? sync.activeProtectedShows
+        : {};
+    protectedShows = allProtectedShows.filter((show) => activeMap[show] !== false);
+  }
 
   if (!protectedShows.length) {
-    return { isSpoiler: false, reason: "no-active-shows" };
+    return finishCheck({ isSpoiler: false, reason: "no-active-shows" }, { countable: false });
   }
 
   if (canHardAllowCareerAdvice(tier0Scope, protectedShows)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-career-advice",
@@ -1901,11 +2116,11 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier0-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   if (canHardAllowGamingMmoPost(tier0Scope, protectedShows)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-gaming-mmo",
@@ -1913,11 +2128,11 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier0-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   if (canHardAllowPromoTrailer(tier0Scope, protectedShows)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-promo-trailer",
@@ -1925,11 +2140,11 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier0-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   if (canHardAllowFranchiseBusinessMeta(tier0Scope)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-franchise-business-meta",
@@ -1937,7 +2152,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier0-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   // Tier 1 + escalation scan: include preceding context so pronoun-only snippets
@@ -1957,7 +2172,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   });
 
   if (canHardAllowBoxOfficeDiscussion(text, protectedShows)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-box-office",
@@ -1965,11 +2180,11 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier1-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   if (canHardAllowUnrelatedPersonalPost(text, protectedShows)) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.03,
       reason: "deterministic-unrelated-personal",
@@ -1977,7 +2192,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       source: "tier1-hard-allow",
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   // No Tier 1 match: on real pages, only escalate for self-labelled spoilers or
@@ -1998,7 +2213,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       const futureAppearanceRumor =
         hasFutureAppearanceInText(tier1Scope) && protectedShowTitleInText(tier1Scope, protectedShows);
       if (!selfLabelsSpoiler && !isSpeculativeLeak && !futureAppearanceRumor) {
-        return { isSpoiler: false, reason: "tier1-no-match" };
+        return finishCheck({ isSpoiler: false, reason: "tier1-no-match", source: "tier1-no-match" });
       }
       const escalationReason = selfLabelsSpoiler
         ? "self-labelled-spoiler"
@@ -2028,7 +2243,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   const dynamicThreshold = getDynamicThreshold(signals.riskScore);
 
   if (signals.hardAllow.matched) {
-    return {
+    return finishCheck({
       isSpoiler: false,
       confidence: 0.05,
       reason: signals.hardAllow.reason,
@@ -2036,11 +2251,11 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       score: signals.riskScore,
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   if (signals.hardBlock.matched) {
-    return {
+    return finishCheck({
       isSpoiler: true,
       confidence: 0.95,
       reason: signals.hardBlock.reason,
@@ -2049,7 +2264,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       score: signals.riskScore,
       sectionHint,
       containerTag,
-    };
+    });
   }
 
   const cacheKey = hashText(
@@ -2062,7 +2277,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
       cacheKey,
       verdict: evalCache[cacheKey],
     });
-    return { ...evalCache[cacheKey], source: "cache-hit" };
+    return finishCheck({ ...evalCache[cacheKey], source: "cache-hit" });
   }
 
   // Tier 2: semantic LLM judgement
@@ -2075,6 +2290,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   for (const showName of matchedShows) {
     const showContext = showContexts[showName] || createFallbackContext(showName);
     try {
+      llmCalls += 1;
       const verdict = await runSemanticJudge(showName, showContext, text, precedingContext);
       const shouldBlur = verdict.isSpoiler && verdict.confidence >= dynamicThreshold;
       debugLog(`${LOG_PREFIX} SEMANTIC_CHECK tier2 result`, {
@@ -2116,7 +2332,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
   }
 
   evalCache[cacheKey] = finalVerdict;
-  await chrome.storage.local.set({ [EVAL_CACHE_KEY]: evalCache });
+  scheduleEvalCacheFlush();
   debugLog(`${LOG_PREFIX} SEMANTIC_CHECK completed`, {
     cacheKey,
     verdict: finalVerdict,
@@ -2126,7 +2342,7 @@ async function handleSemanticCheck(textToAnalyze, pageUrl = "", sectionHint = ""
     sectionHint,
     analyzedTextLength: evaluationText.length,
   });
-  return { ...finalVerdict, source: "semantic-fused", score: signals.riskScore };
+  return finishCheck({ ...finalVerdict, source: "semantic-fused", score: signals.riskScore });
   } finally {
     releaseServiceWorkerKeepAlive();
   }
@@ -2152,7 +2368,20 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     if (type === "SHOW_REMOVED" && showName) return handleShowRemoved(showName);
     if (type === "TMDB_SEARCH") return { results: await searchTmdbTitles(message?.query) };
     if (type === "SEMANTIC_CHECK") {
-      return handleSemanticCheck(textToAnalyze, sender?.url || "", sectionHint, containerTag, precedingContext);
+      return handleSemanticCheck(
+        textToAnalyze,
+        sender?.url || "",
+        sectionHint,
+        containerTag,
+        precedingContext,
+        message?.protectedShows
+      );
+    }
+    if (type === "GET_METRICS") {
+      return getMetricsSummary();
+    }
+    if (type === "RESET_METRICS") {
+      return resetMetrics();
     }
     if (type === "BLUR_APPLIED") {
       debugLog(`${LOG_PREFIX} BLUR_APPLIED`, {

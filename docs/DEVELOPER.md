@@ -73,22 +73,29 @@ High-signal patterns can short-circuit to blur or hard-allow (e.g. relationship 
 
 ```js
 chrome.storage.sync.get(["protectedShows", "activeProtectedShows"], console.log);
-chrome.storage.local.get(["showContexts", "evalCache", "false_positives"], console.log);
+chrome.storage.local.get(["showContexts", "evalCache", "false_positives", "pa_metrics"], console.log);
 ```
 
-3. Clear semantic verdict cache (after `DETECTOR_VERSION` or rule changes):
+3. Detection metrics (local intercept %, cache hit %, LLM usage):
+
+```js
+chrome.runtime.sendMessage({ type: "GET_METRICS" }).then((r) => console.log(r.data));
+// Or open Extension options → detection metrics → copy stats
+```
+
+4. Clear semantic verdict cache (after `DETECTOR_VERSION` or rule changes):
 
 ```js
 chrome.storage.local.set({ evalCache: {} });
 ```
 
-4. Clear generated show contexts for a fresh rebuild:
+5. Clear generated show contexts for a fresh rebuild:
 
 ```js
 chrome.storage.local.set({ showContexts: {} });
 ```
 
-## Fixture regression (62 cases)
+## Fixture regression (63 cases)
 
 Fixed inputs in `tests/fixtures.json`; runner in `tests/run-fixtures.js`.
 

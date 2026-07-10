@@ -12,8 +12,15 @@
  *   await runPlotArmorFixtures({ ids: ["PA-001", "PA-045"] });
  *   await runPlotArmorFixtures({ clearEvalCacheEachCase: true });
  *
+ * Cache warm pass (for metrics):
+ *   await resetMetrics();
+ *   await runPlotArmorFixtures();
+ *   await runPlotArmorFixtures();
+ *   console.log(await getMetricsSummary());
+ *
  * Note: harness uses containerTag FIXTURE so the service worker always escalates to
  * the LLM when Tier 1 has no stored graph — re-paste this file after bumping DETECTOR_VERSION.
+ * Fixture cases pass protectedShows in-memory (no per-case chrome.storage.sync writes).
  */
 async function runPlotArmorFixtures(options = {}) {
   const { limit = null, ids = null, clearEvalCacheEachCase = false } = options;
@@ -29,79 +36,68 @@ async function runPlotArmorFixtures(options = {}) {
     return { total: 0, passed: 0, failed: 0, failures: [] };
   }
 
-  const syncBackup = await chrome.storage.sync.get(["protectedShows", "activeProtectedShows"]);
-  const activeBackup = syncBackup.activeProtectedShows || {};
-
   const failures = [];
   const startedAt = Date.now();
   const canCallDirect = typeof handleSemanticCheck === "function";
 
-  try {
-    for (const f of selected) {
-      const protectedShows = Array.isArray(f.protectedShows) ? f.protectedShows : [];
-      const activeProtectedShows = protectedShows.reduce((acc, show) => {
-        acc[show] = true;
-        return acc;
-      }, {});
+  for (const f of selected) {
+    const protectedShows = Array.isArray(f.protectedShows) ? f.protectedShows : [];
 
-      await chrome.storage.sync.set({
-        protectedShows,
-        activeProtectedShows,
-      });
-
-      if (clearEvalCacheEachCase) {
+    if (clearEvalCacheEachCase) {
+      if (typeof clearEvalCacheMemory === "function") {
+        clearEvalCacheMemory();
+      } else {
         await chrome.storage.local.set({ evalCache: {} });
       }
-
-      const payload = {
-        type: "SEMANTIC_CHECK",
-        textToAnalyze: String(f.text || ""),
-        sectionHint: String(f.sectionHint || ""),
-        precedingContext: String(f.precedingContext || ""),
-        containerTag: String(f.containerTag || "FIXTURE"),
-      };
-      // In service-worker console, call the function directly.
-      // Fallback to runtime messaging when run from another extension context.
-      const response = canCallDirect
-        ? {
-            ok: true,
-            data: await handleSemanticCheck(
-              payload.textToAnalyze,
-              "",
-              payload.sectionHint,
-              payload.containerTag,
-              payload.precedingContext
-            ),
-          }
-        : await chrome.runtime.sendMessage(payload);
-
-      const data = response?.data || {};
-      const gotSpoiler = Boolean(data.isSpoiler);
-      const expectedSpoiler = Boolean(f.expectedSpoiler);
-      const passSpoiler = gotSpoiler === expectedSpoiler;
-
-      const expectedShow = f.expectedMatchedShow ? String(f.expectedMatchedShow) : null;
-      const gotShow = data.matchedShow ? String(data.matchedShow) : null;
-      const passShow = expectedShow ? gotShow === expectedShow : true;
-
-      const passed = passSpoiler && passShow;
-      if (!passed) {
-        failures.push({
-          id: f.id,
-          expectedSpoiler,
-          gotSpoiler,
-          expectedShow,
-          gotShow,
-          reason: data.reason || "",
-          confidence: typeof data.confidence === "number" ? Number(data.confidence.toFixed(3)) : null,
-        });
-      }
     }
-  } finally {
-    await chrome.storage.sync.set({
-      protectedShows: syncBackup.protectedShows || [],
-      activeProtectedShows: activeBackup,
-    });
+
+    const payload = {
+      type: "SEMANTIC_CHECK",
+      textToAnalyze: String(f.text || ""),
+      sectionHint: String(f.sectionHint || ""),
+      precedingContext: String(f.precedingContext || ""),
+      containerTag: String(f.containerTag || "FIXTURE"),
+      protectedShows,
+    };
+    const response = canCallDirect
+      ? {
+          ok: true,
+          data: await handleSemanticCheck(
+            payload.textToAnalyze,
+            "",
+            payload.sectionHint,
+            payload.containerTag,
+            payload.precedingContext,
+            protectedShows
+          ),
+        }
+      : await chrome.runtime.sendMessage(payload);
+
+    const data = response?.data || {};
+    const gotSpoiler = Boolean(data.isSpoiler);
+    const expectedSpoiler = Boolean(f.expectedSpoiler);
+    const passSpoiler = gotSpoiler === expectedSpoiler;
+
+    const expectedShow = f.expectedMatchedShow ? String(f.expectedMatchedShow) : null;
+    const gotShow = data.matchedShow ? String(data.matchedShow) : null;
+    const passShow = expectedShow ? gotShow === expectedShow : true;
+
+    const passed = passSpoiler && passShow;
+    if (!passed) {
+      failures.push({
+        id: f.id,
+        expectedSpoiler,
+        gotSpoiler,
+        expectedShow,
+        gotShow,
+        reason: data.reason || "",
+        confidence: typeof data.confidence === "number" ? Number(data.confidence.toFixed(3)) : null,
+      });
+    }
+  }
+
+  if (typeof flushLocalPersistedState === "function") {
+    await flushLocalPersistedState(true);
   }
 
   const total = selected.length;
@@ -115,6 +111,19 @@ async function runPlotArmorFixtures(options = {}) {
 
   if (failures.length) {
     console.table(failures);
+  }
+
+  try {
+    const metricsResponse = canCallDirect
+      ? { ok: true, data: await getMetricsSummary() }
+      : await chrome.runtime.sendMessage({ type: "GET_METRICS" });
+    const metrics = metricsResponse?.data || metricsResponse || {};
+    console.log(
+      `[Plot Armor fixtures] metrics — local intercept ${metrics.localInterceptPct ?? 0}%, cache ${metrics.cacheHitPct ?? 0}%, LLM checks ${metrics.llmChecks ?? 0}`
+    );
+    console.info("[Plot Armor fixtures] metrics detail", metrics);
+  } catch (error) {
+    console.warn("[Plot Armor fixtures] could not load metrics", error);
   }
 
   return { total, passed, failed, failures, elapsedMs };

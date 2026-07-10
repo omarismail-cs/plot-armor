@@ -6,6 +6,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-plot-armor-ingest-key",
 };
 
+const MAX_BODY_BYTES = 12_000;
+const MAX_REPORTS_PER_DAY = 250;
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -15,6 +18,26 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
 
 function clampText(value: unknown, maxLen: number) {
   return String(value || "").slice(0, maxLen);
+}
+
+function secretsEqual(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let out = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return out === 0;
+}
+
+function isAllowedPageUrl(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return true;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -28,13 +51,18 @@ Deno.serve(async (req) => {
 
   const expectedSecret = Deno.env.get("PLOT_ARMOR_INGEST_SECRET") || "";
   const providedSecret = req.headers.get("x-plot-armor-ingest-key") || "";
-  if (!expectedSecret || providedSecret !== expectedSecret) {
+  if (!expectedSecret || !secretsEqual(providedSecret, expectedSecret)) {
     return jsonResponse({ error: "unauthorized" }, 401);
+  }
+
+  const rawBody = await req.text();
+  if (rawBody.length > MAX_BODY_BYTES) {
+    return jsonResponse({ error: "payload_too_large" }, 413);
   }
 
   let payload: { report?: Record<string, unknown> };
   try {
-    payload = await req.json();
+    payload = JSON.parse(rawBody);
   } catch {
     return jsonResponse({ error: "invalid_json" }, 400);
   }
@@ -44,10 +72,30 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "missing_report" }, 400);
   }
 
+  if (!isAllowedPageUrl(report.url)) {
+    return jsonResponse({ error: "invalid_page_url" }, 400);
+  }
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {
     return jsonResponse({ error: "server_misconfigured" }, 500);
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { count: recentCount, error: countError } = await supabase
+    .from("false_positive_reports")
+    .select("*", { count: "exact", head: true })
+    .gte("created_at", since);
+
+  if (countError) {
+    console.error("rate limit check failed", countError);
+  } else if ((recentCount || 0) >= MAX_REPORTS_PER_DAY) {
+    return jsonResponse({ error: "rate_limited" }, 429);
   }
 
   const row = {
@@ -65,10 +113,6 @@ Deno.serve(async (req) => {
     extension_version: clampText(report.extensionVersion, 40) || null,
     raw: report,
   };
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
 
   const { data, error } = await supabase
     .from("false_positive_reports")

@@ -5,8 +5,6 @@ const FALSE_POSITIVES_KEY = "false_positives";
 const form = document.getElementById("optionsForm");
 const openaiKeyInput = document.getElementById("openaiKey");
 const tmdbTokenInput = document.getElementById("tmdbToken");
-const ingestUrlInput = document.getElementById("ingestUrl");
-const ingestKeyInput = document.getElementById("ingestKey");
 const clearBtn = document.getElementById("clearBtn");
 const statusDiv = document.getElementById("status");
 const reportsCountEl = document.getElementById("reportsCount");
@@ -18,14 +16,15 @@ const clearReportsConfirmEl = document.getElementById("clearReportsConfirm");
 const clearReportsConfirmCountEl = document.getElementById("clearReportsConfirmCount");
 const clearReportsCancelBtn = document.getElementById("clearReportsCancelBtn");
 const clearReportsOkBtn = document.getElementById("clearReportsOkBtn");
+const metricsSummaryEl = document.getElementById("metricsSummary");
+const copyMetricsBtn = document.getElementById("copyMetricsBtn");
+const resetMetricsBtn = document.getElementById("resetMetricsBtn");
 
 async function loadSavedKeys() {
   try {
     const result = await chrome.storage.local.get([
       "OPENAI_API_KEY",
       "TMDB_READ_ACCESS_TOKEN",
-      "FALSE_POSITIVE_INGEST_URL",
-      "FALSE_POSITIVE_INGEST_KEY",
     ]);
 
     if (result.OPENAI_API_KEY) {
@@ -34,14 +33,6 @@ async function loadSavedKeys() {
 
     if (result.TMDB_READ_ACCESS_TOKEN) {
       tmdbTokenInput.value = result.TMDB_READ_ACCESS_TOKEN;
-    }
-
-    if (result.FALSE_POSITIVE_INGEST_URL) {
-      ingestUrlInput.value = result.FALSE_POSITIVE_INGEST_URL;
-    }
-
-    if (result.FALSE_POSITIVE_INGEST_KEY) {
-      ingestKeyInput.value = result.FALSE_POSITIVE_INGEST_KEY;
     }
   } catch (error) {
     console.error("Error loading saved keys:", error);
@@ -225,11 +216,9 @@ form.addEventListener("submit", async (e) => {
 
   const openaiKey = openaiKeyInput.value.trim();
   const tmdbToken = tmdbTokenInput.value.trim();
-  const ingestUrl = ingestUrlInput.value.trim();
-  const ingestKey = ingestKeyInput.value.trim();
 
-  if (!openaiKey && !tmdbToken && !ingestUrl && !ingestKey) {
-    showStatus("Please enter at least one setting", true);
+  if (!openaiKey && !tmdbToken) {
+    showStatus("Please enter at least one API key", true);
     return;
   }
 
@@ -244,14 +233,6 @@ form.addEventListener("submit", async (e) => {
       dataToSave.TMDB_READ_ACCESS_TOKEN = tmdbToken;
     }
 
-    if (ingestUrl) {
-      dataToSave.FALSE_POSITIVE_INGEST_URL = ingestUrl;
-    }
-
-    if (ingestKey) {
-      dataToSave.FALSE_POSITIVE_INGEST_KEY = ingestKey;
-    }
-
     await chrome.storage.local.set(dataToSave);
     showStatus("✓ Settings saved successfully!");
   } catch (error) {
@@ -261,21 +242,14 @@ form.addEventListener("submit", async (e) => {
 });
 
 clearBtn.addEventListener("click", async () => {
-  if (!confirm("Clear all saved API keys and Supabase ingest settings?")) {
+  if (!confirm("Clear all saved API keys?")) {
     return;
   }
 
   try {
-    await chrome.storage.local.remove([
-      "OPENAI_API_KEY",
-      "TMDB_READ_ACCESS_TOKEN",
-      "FALSE_POSITIVE_INGEST_URL",
-      "FALSE_POSITIVE_INGEST_KEY",
-    ]);
+    await chrome.storage.local.remove(["OPENAI_API_KEY", "TMDB_READ_ACCESS_TOKEN"]);
     openaiKeyInput.value = "";
     tmdbTokenInput.value = "";
-    ingestUrlInput.value = "";
-    ingestKeyInput.value = "";
     showStatus("✓ Settings cleared");
   } catch (error) {
     console.error("Error clearing keys:", error);
@@ -310,6 +284,59 @@ clearReportsOkBtn?.addEventListener("click", async () => {
   renderReports([]);
 });
 
+function formatMetricsSummary(metrics) {
+  const m = metrics || {};
+  const lines = [
+    `Total checks:     ${m.totalChecks ?? 0}`,
+    `Local intercept:  ${m.localInterceptPct ?? 0}% (no OpenAI)`,
+    `Cache hits:       ${m.cacheHitPct ?? 0}%`,
+    `LLM checks:       ${m.llmChecks ?? 0} (${m.llmCheckPct ?? 0}%)`,
+    `LLM API calls:    ${m.llmCalls ?? 0}`,
+    `Detector:         ${m.detectorVersion || "—"}`,
+    `Since:            ${m.startedAt || "—"}`,
+  ];
+  const bySource = m.bySource && typeof m.bySource === "object" ? m.bySource : {};
+  const buckets = Object.entries(bySource).sort((a, b) => b[1] - a[1]);
+  if (buckets.length) {
+    lines.push("", "By source:");
+    buckets.forEach(([key, count]) => lines.push(`  ${key}: ${count}`));
+  }
+  return lines.join("\n");
+}
+
+async function loadMetricsPanel() {
+  if (!metricsSummaryEl) return;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_METRICS" });
+    const data = response?.data || response || {};
+    metricsSummaryEl.textContent = formatMetricsSummary(data);
+  } catch (error) {
+    metricsSummaryEl.textContent = "Could not load metrics.";
+    console.error("Error loading metrics:", error);
+  }
+}
+
+copyMetricsBtn?.addEventListener("click", async () => {
+  const text = metricsSummaryEl?.textContent || "";
+  if (!text || text === "Loading…") return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showStatus("Metrics copied to clipboard");
+  } catch {
+    showStatus("Could not copy metrics", true);
+  }
+});
+
+resetMetricsBtn?.addEventListener("click", async () => {
+  try {
+    await chrome.runtime.sendMessage({ type: "RESET_METRICS" });
+    await loadMetricsPanel();
+    showStatus("Metrics reset");
+  } catch {
+    showStatus("Could not reset metrics", true);
+  }
+});
+
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" || !changes[FALSE_POSITIVES_KEY]) return;
   const next = Array.isArray(changes[FALSE_POSITIVES_KEY].newValue)
@@ -320,3 +347,4 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 loadSavedKeys();
 loadFalsePositives().then(renderReports);
+loadMetricsPanel();
